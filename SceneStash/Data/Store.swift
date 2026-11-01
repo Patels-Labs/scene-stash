@@ -33,6 +33,8 @@ final class Tracked: NSManagedObject {
     @NSManaged var runtime: Int32
     @NSManaged var addedAt: Date?
     @NSManaged var watchedAt: Date?
+    /// How far into a film you are, in seconds; 0 when not started or finished.
+    @NSManaged var position: Int32
 
     var mediaType: MediaType { MediaType(rawValue: mediaTypeRaw ?? "") ?? .movie }
     var status: TrackStatus {
@@ -136,7 +138,7 @@ final class Store {
         item.backdropPath = title.backdropPath ?? item.backdropPath
         item.releaseDate = title.date ?? item.releaseDate
         if let runtime { item.runtime = Int32(runtime) }
-        if status == .seen && item.status != .seen { item.watchedAt = .now }
+        if status == .seen && item.status != .seen { item.watchedAt = .now; item.position = 0 }
         item.status = status
         save()
         return item
@@ -145,6 +147,15 @@ final class Store {
     func setRating(_ rating: Int, for title: Title) {
         let item = tracked(title.id, title.mediaType) ?? track(title, status: .seen)
         item.rating = Int16(rating)
+        save()
+    }
+
+    /// Records where you stopped in a film; anything past the start puts it on the Watching shelf.
+    func setPosition(_ seconds: Int, for title: Title, runtime: Int?) {
+        let item = tracked(title.id, title.mediaType) ?? track(title, status: .watching, runtime: runtime)
+        if let runtime, item.runtime == 0 { item.runtime = Int32(runtime) }
+        item.position = Int32(max(seconds, 0))
+        if seconds > 0, item.status != .watching { item.status = .watching }
         save()
     }
 
@@ -212,7 +223,7 @@ final class Store {
             attr("posterPath", .stringAttributeType), attr("backdropPath", .stringAttributeType),
             attr("releaseDate", .stringAttributeType), attr("rating", .integer16AttributeType, 0),
             attr("runtime", .integer32AttributeType, 0), attr("addedAt", .dateAttributeType),
-            attr("watchedAt", .dateAttributeType),
+            attr("watchedAt", .dateAttributeType), attr("position", .integer32AttributeType, 0),
         ]
         let episode = NSEntityDescription()
         episode.name = "WatchedEpisode"

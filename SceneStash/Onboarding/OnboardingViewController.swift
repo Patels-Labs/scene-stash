@@ -451,24 +451,276 @@ private final class DeckBeat: UIView {
 // MARK: - Beat 3: services
 
 private final class ServicesBeat: UIView {
+    private let header: UIStackView
+    private let remote = RemoteView()
+    private let more = UIButton(type: .system)
+    private let light = CAGradientLayer()
+
     override init(frame: CGRect) {
-        super.init(frame: frame)
         let region = Locale.current.localizedString(forRegionCode: Prefs.region) ?? Prefs.region
-        let header = beatHeader(step: "Step 2 of 2", title: "Where do you watch?", body: "Pick your services in \(region). We'll flag what's already yours to stream.")
-        let picker = ServicesPickerView()
-        picker.limit = 21
-        [header, picker].forEach { addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        header = beatHeader(step: "Step 2 of 2 · \(region)", title: "Where do you watch?", body: "Press the ones you pay for.")
+        super.init(frame: frame)
+        // The remote's keys light the room: the more you press, the warmer it gets.
+        light.type = .radial
+        light.colors = [Theme.accent.withAlphaComponent(0.5).cgColor, Theme.accent.withAlphaComponent(0).cgColor]
+        light.startPoint = CGPoint(x: 0.5, y: 0.5)
+        light.endPoint = CGPoint(x: 1, y: 1)
+        layer.addSublayer(light)
+        more.setTitle("More services", for: .normal)
+        more.titleLabel?.font = Theme.label(.caption1, weight: .bold)
+        more.tintColor = Theme.secondary
+        more.addAction(UIAction { [weak self] _ in self?.showAll() }, for: .primaryActionTriggered)
+        remote.onChange = { [weak self] in self?.relight(animated: true) }
+        [header, remote, more].forEach(addSubview)
+        header.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 18),
             header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24),
             header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24),
-            picker.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 10),
-            picker.leadingAnchor.constraint(equalTo: leadingAnchor),
-            picker.trailingAnchor.constraint(equalTo: trailingAnchor),
-            picker.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -78),
         ])
+        relight(animated: false)
+        Task {
+            let providers = (try? await TMDB.shared.providers(region: Prefs.region)) ?? []
+            // Rental storefronts aren't subscriptions; the remote is for what you pay for monthly.
+            remote.providers = Array(providers.filter { !$0.providerName.contains("Store") && !$0.providerName.hasSuffix("Channel") }.prefix(8))
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let size = RemoteView.size
+        let top = header.frame.maxY + 22
+        let bottom = bounds.height - safeAreaInsets.bottom - 78 - 40
+        let scale = min(1, (bottom - top) / size.height)
+        remote.bounds = CGRect(origin: .zero, size: size)
+        remote.transform = CGAffineTransform(scaleX: scale, y: scale)
+        remote.center = CGPoint(x: bounds.midX, y: top + size.height * scale / 2)
+        more.sizeToFit()
+        more.center = CGPoint(x: bounds.midX, y: remote.frame.maxY + 22)
+        light.frame = remote.frame.insetBy(dx: -220, dy: -160)
+    }
+
+    private func relight(animated: Bool) {
+        let target = Float(min(0.15 + Double(Prefs.services.count) * 0.14, 1))
+        if animated {
+            let a = CABasicAnimation(keyPath: "opacity")
+            a.fromValue = light.presentation()?.opacity ?? light.opacity
+            a.duration = 0.4
+            light.add(a, forKey: "opacity")
+        }
+        light.opacity = target
+    }
+
+    private func showAll() {
+        let vc = UIViewController()
+        vc.title = "Your services"
+        vc.view.backgroundColor = Theme.bg
+        let picker = ServicesPickerView()
+        vc.view.addSubview(picker)
+        picker.pin(to: vc.view)
+        let nav = UINavigationController(rootViewController: vc)
+        vc.navigationItem.rightBarButtonItem = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { [weak self, weak nav] _ in
+            nav?.dismiss(animated: true)
+            self?.remote.refresh()
+            self?.relight(animated: true)
+        })
+        nav.sheetPresentationController?.detents = [.medium(), .large()]
+        let host = sequence(first: self as UIResponder, next: \.next).first { $0 is UIViewController } as? UIViewController
+        host?.present(nav, animated: true)
+    }
+}
+
+/// A TV remote with a key for each service. Keys press in and light up; the little screen counts them.
+private final class RemoteView: UIView {
+    static let size = CGSize(width: 232, height: 470)
+    var onChange: (() -> Void)?
+    var providers: [Provider] = [] { didSet { build() } }
+    private let body = CAGradientLayer()
+    private let bodyMask = CAShapeLayer()
+    private let dpad = UIView()
+    private let screen = UILabel()
+    private let grid = UIStackView()
+    private var keys: [RemoteKey] = []
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        body.colors = [UIColor(white: 0.18, alpha: 1).cgColor, UIColor(white: 0.08, alpha: 1).cgColor]
+        body.mask = bodyMask
+        layer.addSublayer(body)
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.8
+        layer.shadowRadius = 40
+        layer.shadowOffset = CGSize(width: 0, height: 30)
+
+        dpad.backgroundColor = UIColor(white: 0.05, alpha: 1)
+        dpad.layer.cornerRadius = 54
+        let ok = UIView()
+        ok.backgroundColor = UIColor(white: 0.15, alpha: 1)
+        ok.layer.cornerRadius = 22
+        ok.layer.borderWidth = 1
+        ok.layer.borderColor = UIColor(white: 1, alpha: 0.08).cgColor
+        dpad.addSubview(ok)
+        ok.frame = CGRect(x: 32, y: 32, width: 44, height: 44)
+        for angle in stride(from: 0.0, to: 2 * .pi, by: .pi / 2) {
+            let tick = UIView(frame: CGRect(x: 0, y: 0, width: 4, height: 4))
+            tick.backgroundColor = UIColor(white: 1, alpha: 0.25)
+            tick.layer.cornerRadius = 2
+            tick.center = CGPoint(x: 54 + cos(angle) * 40, y: 54 + sin(angle) * 40)
+            dpad.addSubview(tick)
+        }
+        dpad.isAccessibilityElement = false
+
+        screen.font = .monospacedSystemFont(ofSize: 13, weight: .bold)
+        screen.textColor = Theme.accent
+        screen.textAlignment = .center
+        screen.backgroundColor = UIColor(red: 0.04, green: 0.06, blue: 0.03, alpha: 1)
+        screen.layer.cornerRadius = 8
+        screen.clipsToBounds = true
+        screen.layer.shadowColor = Theme.accent.cgColor
+        screen.accessibilityTraits = .updatesFrequently
+
+        grid.axis = .vertical
+        grid.spacing = 10
+        grid.distribution = .fillEqually
+        [dpad, screen, grid].forEach(addSubview)
+        build()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        body.frame = bounds
+        let w = bounds.width, h = bounds.height, top = w / 2, bottom: CGFloat = 44
+        let p = UIBezierPath()
+        p.move(to: CGPoint(x: 0, y: top))
+        p.addArc(withCenter: CGPoint(x: w / 2, y: top), radius: w / 2, startAngle: .pi, endAngle: 0, clockwise: true)
+        p.addLine(to: CGPoint(x: w, y: h - bottom))
+        p.addArc(withCenter: CGPoint(x: w - bottom, y: h - bottom), radius: bottom, startAngle: 0, endAngle: .pi / 2, clockwise: true)
+        p.addLine(to: CGPoint(x: bottom, y: h))
+        p.addArc(withCenter: CGPoint(x: bottom, y: h - bottom), radius: bottom, startAngle: .pi / 2, endAngle: .pi, clockwise: true)
+        p.close()
+        bodyMask.path = p.cgPath
+        layer.shadowPath = p.cgPath
+        dpad.frame = CGRect(x: (w - 108) / 2, y: 22, width: 108, height: 108)
+        screen.frame = CGRect(x: 20, y: dpad.frame.maxY + 16, width: w - 40, height: 30)
+        grid.frame = CGRect(x: 18, y: screen.frame.maxY + 16, width: w - 36, height: h - screen.frame.maxY - 16 - 30)
+    }
+
+    private func build() {
+        grid.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        keys = (0..<8).map { i in
+            let key = RemoteKey(provider: providers[safe: i])
+            key.addAction(UIAction { [weak self, weak key] _ in
+                guard let key, let id = key.provider?.providerId else { return }
+                var mine = Prefs.services
+                if mine.contains(id) { mine.remove(id); Haptics.soft() } else { mine.insert(id); Haptics.thunk() }
+                Prefs.services = mine
+                key.lit = mine.contains(id)
+                self?.updateScreen()
+                self?.onChange?()
+            }, for: .touchUpInside)
+            return key
+        }
+        for pair in stride(from: 0, to: keys.count, by: 2) {
+            let row = UIStackView(arrangedSubviews: Array(keys[pair..<min(pair + 2, keys.count)]))
+            row.spacing = 10
+            row.distribution = .fillEqually
+            grid.addArrangedSubview(row)
+        }
+        refresh()
+    }
+
+    func refresh() {
+        keys.forEach { $0.lit = $0.provider.map { Prefs.services.contains($0.providerId) } ?? false }
+        updateScreen()
+    }
+
+    private func updateScreen() {
+        let n = Prefs.services.count
+        screen.text = providers.isEmpty ? "TUNING…" : n == 0 ? "NO SIGNAL" : "\(n) CHANNEL\(n == 1 ? "" : "S")"
+        screen.layer.shadowOpacity = n == 0 ? 0 : 0.6
+        screen.accessibilityLabel = n == 0 ? "No services selected" : "\(n) service\(n == 1 ? "" : "s") selected"
+    }
+}
+
+/// One rubbery remote key with a service's logo; pressed keys sit lower and glow.
+private final class RemoteKey: UIControl {
+    let provider: Provider?
+    private let face = CAGradientLayer()
+    private let logo = UIImageView()
+    private let name = UILabel.make(Theme.display(15, weight: .black, relativeTo: .caption1))
+    private let led = UIView()
+    var lit = false { didSet { restyle(animated: oldValue != lit) } }
+
+    init(provider: Provider?) {
+        self.provider = provider
+        super.init(frame: .zero)
+        face.cornerRadius = 14
+        face.cornerCurve = .continuous
+        layer.addSublayer(face)
+        logo.layer.cornerRadius = 5
+        logo.clipsToBounds = true
+        logo.setImage(TMDB.imageURL(provider?.logoPath, .logo))
+        name.text = (provider.map { Self.shortName($0.providerName) } ?? "—").uppercased()
+        name.adjustsFontSizeToFitWidth = true
+        name.minimumScaleFactor = 0.6
+        led.layer.cornerRadius = 2.5
+        let row = UIStackView(arrangedSubviews: [logo, name])
+        row.spacing = 6
+        row.alignment = .center
+        row.isUserInteractionEnabled = false
+        [row, led].forEach { addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        NSLayoutConstraint.activate([
+            logo.widthAnchor.constraint(equalToConstant: 20), logo.heightAnchor.constraint(equalToConstant: 20),
+            row.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 2),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            row.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            led.widthAnchor.constraint(equalToConstant: 5), led.heightAnchor.constraint(equalToConstant: 5),
+            led.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            led.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
+        ])
+        isEnabled = provider != nil
+        isAccessibilityElement = true
+        accessibilityLabel = provider?.providerName
+        restyle(animated: false)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Remote keys are small; "Amazon Prime Video" becomes "Prime Video", "Disney Plus" becomes "Disney+".
+    static func shortName(_ name: String) -> String {
+        name.replacingOccurrences(of: "Amazon Prime Video", with: "Prime Video")
+            .replacingOccurrences(of: " Plus", with: "+")
+            .replacingOccurrences(of: " with Ads", with: "")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        face.frame = bounds
+        face.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: 14).cgPath
+    }
+
+    override var isHighlighted: Bool {
+        didSet { UIView.animate(withDuration: 0.08) { self.transform = CGAffineTransform(translationX: 0, y: self.isHighlighted ? 3 : (self.lit ? 2 : 0)) } }
+    }
+
+    private func restyle(animated: Bool) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(!animated)
+        face.colors = lit
+            ? [UIColor(red: 1, green: 0.82, blue: 0.48, alpha: 1).cgColor, Theme.accent.cgColor]
+            : [UIColor(white: 0.24, alpha: 1).cgColor, UIColor(white: 0.15, alpha: 1).cgColor]
+        face.shadowColor = (lit ? Theme.accent : .black).cgColor
+        face.shadowOpacity = lit ? 0.55 : 1
+        face.shadowRadius = lit ? 12 : 0
+        face.shadowOffset = lit ? .zero : CGSize(width: 0, height: 3)
+        CATransaction.commit()
+        name.textColor = lit ? .black : Theme.text
+        led.backgroundColor = lit ? .black : UIColor(white: 0.35, alpha: 1)
+        transform = CGAffineTransform(translationX: 0, y: lit ? 2 : 0)
+        alpha = provider == nil ? 0.4 : 1
+        accessibilityTraits = lit ? [.button, .selected] : .button
+    }
 }
 
 // MARK: - Beat 4: finale

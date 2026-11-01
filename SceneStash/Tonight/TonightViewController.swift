@@ -1,26 +1,48 @@
 import UIKit
 
+/// Tonight's programme: what you're in the middle of, laid out on the clock from now until lights up.
 final class TonightViewController: UIViewController, UICollectionViewDelegate {
     nonisolated struct UpNext: Hashable { let show: Title; let episode: Episode; let remaining: Int; let runtime: Int? }
+    nonisolated struct Film: Hashable { let title: Title; let position: Int; let runtime: Int }
     nonisolated struct Upcoming: Hashable { let title: Title; let date: Date; let label: String }
-    nonisolated private enum Section: Hashable { case intro, upNext, watchlist, upcoming, trending }
-    nonisolated private enum Item: Hashable { case intro, upNext(UpNext), watchlist(Title), upcoming(Upcoming), trending(Title) }
+    nonisolated enum Slot: Hashable {
+        case episode(UpNext), film(Film), pick(Film), free
+
+        var minutes: Int {
+            switch self {
+            case .episode(let u): u.runtime ?? 45
+            case .film(let f): max(f.runtime - f.position / 60, 1)
+            case .pick(let f): f.runtime
+            case .free: 0
+            }
+        }
+        var title: Title? {
+            switch self {
+            case .episode(let u): u.show
+            case .film(let f), .pick(let f): f.title
+            case .free: nil
+            }
+        }
+    }
+    nonisolated private enum Section: Hashable { case header, programme, watchlist, upcoming, trending }
+    nonisolated private enum Item: Hashable { case header, slot(Slot), watchlist(Title), upcoming(Upcoming), trending(Title) }
 
     private let glow = GlowView()
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
     private var details: [Int: TitleDetail] = [:]
     private var upNext: [UpNext] = []
+    private var programme: [Slot] = []
     private var upcoming: [Upcoming] = []
     private var trending: [Title] = []
     private var refreshTask: Task<Void, Never>?
-    private var focusedShow = -1
+    private var clock: Timer?
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "Tonight"
         installBackdrop()
-        navigationItem.largeTitleDisplayMode = .always
+        navigationItem.largeTitleDisplayMode = .never
+        navigationController?.setNavigationBarHidden(true, animated: false)
         view.addSubview(glow)
         glow.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -43,9 +65,31 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         Task {
             trending = (try? await TMDB.shared.titles(Reel(name: "Trending", path: "trending/all/day"))) ?? []
             applySnapshot()
-            if upNext.isEmpty { glow.show(TMDB.imageURL(trending.first?.posterPath, .poster)) }
+            if programme.isEmpty { glow.show(TMDB.imageURL(trending.first?.posterPath, .poster)) }
         }
         NotificationCenter.default.addObserver(self, selector: #selector(storeChanged), name: .NSManagedObjectContextObjectsDidChange, object: Store.shared.context)
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        navigationController?.setNavigationBarHidden(true, animated: animated)
+        // The clock on the page is live: start times and the countdown move with the minute.
+        clock = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+        tick()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        navigationController?.setNavigationBarHidden(false, animated: animated)
+        clock?.invalidate()
+    }
+
+    private func tick() {
+        var snap = dataSource.snapshot()
+        snap.reconfigureItems(snap.itemIdentifiers.filter { if case .upcoming = $0 { false } else if case .trending = $0 { false } else { true } })
+        dataSource.apply(snap, animatingDifferences: false)
     }
 
     @objc private func storeChanged() {
@@ -83,6 +127,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
                 next.append(UpNext(show: detail.title, episode: episode, remaining: Progress.remaining(seasons: seasons, watched: watched, aired: aired), runtime: episode.runtime ?? detail.runtime))
             }
             upNext = next
+            programme = buildProgramme()
 
             var soon: [Upcoming] = []
             for item in tracked {
@@ -95,72 +140,98 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             upcoming = soon.sorted { $0.date < $1.date }
             collectionView.refreshControl?.endRefreshing()
             applySnapshot()
-            focus(min(max(focusedShow, 0), max(upNext.count - 1, 0)), force: true)
+            glow.show(TMDB.imageURL(programme.first?.title?.posterPath ?? trending.first?.posterPath, .poster))
         }
     }
 
-    private func markWatched(_ item: UpNext) {
-        Store.shared.setWatched([EpisodeKey(season: item.episode.seasonNumber, episode: item.episode.episodeNumber)], watched: true, show: item.show, runtime: item.runtime)
+    /// The next episode of your first show leads, then any film you're partway through, then the rest.
+    /// If there's room before lights up, a released film from the watchlist fills it.
+    private func buildProgramme() -> [Slot] {
+        let films = Store.shared.all(.watching).filter { $0.mediaType == .movie && $0.runtime > 0 }
+            .map { Slot.film(Film(title: $0.title, position: Int($0.position), runtime: Int($0.runtime))) }
+        var slots = Array(upNext.prefix(1).map(Slot.episode)) + films + upNext.dropFirst().map(Slot.episode)
+        let used = slots.reduce(0) { $0 + $1.minutes }
+        let left = Int(Self.lightsUp().timeIntervalSince(Self.doors()) / 60) - used
+        if let pick = Store.shared.all(.watchlist).first(where: {
+            $0.mediaType == .movie && $0.runtime > 0 && Int($0.runtime) <= left && ($0.releaseDate.map { DateText.isPast($0) } ?? true)
+        }) {
+            slots.append(.pick(Film(title: pick.title, position: 0, runtime: Int(pick.runtime))))
+        }
+        let rest = left - slots.reduce(0) { $0 + $1.minutes } + used
+        if !slots.isEmpty, rest >= 20 { slots.append(.free) }
+        return slots
     }
 
-    /// The room takes on the colours of whichever show is in front of you.
-    private func focus(_ index: Int, force: Bool = false) {
-        guard force || index != focusedShow, let item = upNext[safe: index] else { return }
-        focusedShow = index
-        glow.show(TMDB.imageURL(item.show.posterPath, .poster))
+    /// Midnight, unless that's under an hour away (or past), in which case two hours from now.
+    static func lightsUp(now: Date = .now) -> Date {
+        let cal = Calendar.current
+        let midnight = cal.startOfDay(for: cal.date(byAdding: .day, value: 1, to: now) ?? now)
+        let hour = cal.component(.hour, from: now)
+        return hour >= 5 && midnight.timeIntervalSince(now) >= 3600 ? midnight : now.addingTimeInterval(2 * 3600)
+    }
+
+    /// The programme starts now in the evening; earlier in the day it waits for doors at eight.
+    static func doors(now: Date = .now) -> Date {
+        let cal = Calendar.current
+        let hour = cal.component(.hour, from: now)
+        guard hour >= 5, hour < 19 else { return now }
+        return cal.date(bySettingHour: 20, minute: 0, second: 0, of: now) ?? now
+    }
+
+    private func startTimes() -> [Date] {
+        var t = Self.doors()
+        return programme.map { slot in defer { t += TimeInterval(slot.minutes * 60) }; return t }
+    }
+
+    private func finish(_ slot: Slot) {
+        switch slot {
+        case .episode(let u):
+            Store.shared.setWatched([EpisodeKey(season: u.episode.seasonNumber, episode: u.episode.episodeNumber)], watched: true, show: u.show, runtime: u.runtime)
+        case .film(let f), .pick(let f):
+            Store.shared.track(f.title, status: .seen, runtime: f.runtime)
+        case .free: break
+        }
+        Haptics.success()
+    }
+
+    private func openSearch() {
+        guard let tabs = tabBarController else { return }
+        tabs.selectedTab = tabs.tabs.first { $0 is UISearchTab }
     }
 
     // MARK: Collection
 
     private func makeLayout() -> UICollectionViewLayout {
-        UICollectionViewCompositionalLayout { [weak self] index, env in
+        UICollectionViewCompositionalLayout { [weak self] index, _ in
+            let list = { (insets: NSDirectionalEdgeInsets, spacing: CGFloat) -> NSCollectionLayoutSection in
+                let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(120))
+                let s = NSCollectionLayoutSection(group: .vertical(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)]))
+                s.contentInsets = insets
+                s.interGroupSpacing = spacing
+                return s
+            }
             switch self?.dataSource?.sectionIdentifier(for: index) {
-            case .intro:
-                let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(60))
-                let s = NSCollectionLayoutSection(group: .vertical(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)]))
-                s.contentInsets = .init(top: 0, leading: 20, bottom: 18, trailing: 20)
-                return s
-            case .upNext:
-                let width = env.container.effectiveContentSize.width - 40
-                let size = NSCollectionLayoutSize(widthDimension: .absolute(width), heightDimension: .estimated(width * 0.5625 + 230))
-                let group = NSCollectionLayoutGroup.horizontal(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)])
-                let s = NSCollectionLayoutSection(group: group)
-                s.orthogonalScrollingBehavior = .groupPagingCentered
-                s.interGroupSpacing = 16
-                s.contentInsets = .init(top: 4, leading: 20, bottom: 40, trailing: 20)
-                s.visibleItemsInvalidationHandler = { [weak self] items, offset, env in
-                    let mid = offset.x + env.container.contentSize.width / 2
-                    guard let nearest = items.filter({ $0.representedElementCategory == .cell })
-                        .min(by: { abs($0.center.x - mid) < abs($1.center.x - mid) }) else { return }
-                    let index = nearest.indexPath.item
-                    DispatchQueue.main.async { self?.focus(index) }
-                }
-                return s
+            case .header: return list(.init(top: 8, leading: 20, bottom: 22, trailing: 20), 0)
+            case .programme: return list(.init(top: 0, leading: 0, bottom: 44, trailing: 20), 8)
             case .upcoming:
-                let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(76))
-                let s = NSCollectionLayoutSection(group: .vertical(layoutSize: size, subitems: [NSCollectionLayoutItem(layoutSize: size)]))
-                s.interGroupSpacing = 0
-                s.contentInsets = .init(top: 8, leading: 20, bottom: 40, trailing: 20)
+                let s = list(.init(top: 8, leading: 20, bottom: 40, trailing: 20), 0)
                 s.boundarySupplementaryItems = [Layouts.headerItem()]
                 return s
-            default:
-                return Layouts.posterRow()
+            default: return Layouts.posterRow()
             }
         }
     }
 
     private func configureDataSource() {
-        let introReg = UICollectionView.CellRegistration<IntroCell, Item> { [unowned self] cell, _, _ in
-            cell.configure(waiting: upNext.count, empty: Store.shared.all().isEmpty)
-            cell.onDiscover = { [weak self] in
-                guard let tabs = self?.tabBarController else { return }
-                tabs.selectedTab = tabs.tabs.first { $0 is UISearchTab }
-            }
+        let headerCellReg = UICollectionView.CellRegistration<ProgrammeHeaderCell, Item> { [unowned self] cell, _, _ in
+            let used = programme.reduce(0) { $0 + $1.minutes }
+            cell.configure(doors: Self.doors(), lightsUp: Self.lightsUp(), booked: used, slots: programme.filter { $0 != .free }.count, empty: Store.shared.all().isEmpty)
+            cell.onDiscover = { [weak self] in self?.openSearch() }
         }
-        let upNextReg = UICollectionView.CellRegistration<UpNextCell, Item> { [unowned self] cell, _, item in
-            guard case .upNext(let u) = item else { return }
-            cell.configure(u)
-            cell.onWatched = { [weak self] in self?.markWatched(u) }
+        let slotReg = UICollectionView.CellRegistration<ProgrammeCell, Item> { [unowned self] cell, _, item in
+            guard case .slot(let slot) = item, let i = programme.firstIndex(of: slot) else { return }
+            cell.configure(slot, start: startTimes()[i], isNow: i == 0 && Self.doors() <= .now)
+            cell.onTorn = { [weak self] in self?.finish(slot) }
         }
         let upcomingReg = UICollectionView.CellRegistration<UpcomingCell, Item> { cell, _, item in
             if case .upcoming(let u) = item { cell.configure(u) }
@@ -179,8 +250,8 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { cv, indexPath, item in
             switch item {
-            case .intro: cv.dequeueConfiguredReusableCell(using: introReg, for: indexPath, item: item)
-            case .upNext: cv.dequeueConfiguredReusableCell(using: upNextReg, for: indexPath, item: item)
+            case .header: cv.dequeueConfiguredReusableCell(using: headerCellReg, for: indexPath, item: item)
+            case .slot: cv.dequeueConfiguredReusableCell(using: slotReg, for: indexPath, item: item)
             case .upcoming: cv.dequeueConfiguredReusableCell(using: upcomingReg, for: indexPath, item: item)
             case .trending, .watchlist: cv.dequeueConfiguredReusableCell(using: posterReg, for: indexPath, item: item)
             }
@@ -192,38 +263,41 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
 
     private func applySnapshot() {
         var snap = NSDiffableDataSourceSnapshot<Section, Item>()
-        snap.appendSections([.intro]); snap.appendItems([.intro])
-        if !upNext.isEmpty { snap.appendSections([.upNext]); snap.appendItems(upNext.map(Item.upNext)) }
-        let ready = Store.shared.all(.watchlist).map(\.title).filter { $0.date.map { DateText.isPast($0) } ?? true }
+        snap.appendSections([.header]); snap.appendItems([.header])
+        if !programme.isEmpty { snap.appendSections([.programme]); snap.appendItems(programme.map(Item.slot)) }
+        let picked = Set(programme.compactMap(\.title))
+        let ready = Store.shared.all(.watchlist).map(\.title).filter { !picked.contains($0) && ($0.date.map { DateText.isPast($0) } ?? true) }
         if !ready.isEmpty { snap.appendSections([.watchlist]); snap.appendItems(ready.map(Item.watchlist)) }
         if !upcoming.isEmpty { snap.appendSections([.upcoming]); snap.appendItems(upcoming.prefix(8).map(Item.upcoming)) }
-        if !trending.isEmpty { snap.appendSections([.trending]); snap.appendItems(trending.map(Item.trending)) }
-        snap.reconfigureItems([.intro])
+        if programme.isEmpty, !trending.isEmpty { snap.appendSections([.trending]); snap.appendItems(trending.map(Item.trending)) }
+        snap.reconfigureItems(snap.itemIdentifiers.filter { if case .slot = $0 { true } else { $0 == .header } })
         dataSource.apply(snap, animatingDifferences: !UIAccessibility.isReduceMotionEnabled)
     }
 
     func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
-        dataSource.itemIdentifier(for: indexPath) != .intro
+        dataSource.itemIdentifier(for: indexPath) != .header
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         guard let item = dataSource.itemIdentifier(for: indexPath) else { return }
         let title: Title
         switch item {
-        case .upNext(let u): title = u.show
+        case .slot(.free): openSearch(); return
+        case .slot(let s): guard let t = s.title else { return }; title = t
         case .upcoming(let u): title = u.title
         case .trending(let t), .watchlist(let t): title = t
-        case .intro: return
+        case .header: return
         }
         Haptics.tap()
         openDetail(title) { [weak self] in
-            self?.dataSource.indexPath(for: item).flatMap { collectionView.cellForItem(at: $0) }
+            self?.dataSource.indexPath(for: item).flatMap { collectionView.cellForItem(at: $0) }.map { ($0 as? ProgrammeCell)?.card ?? $0 }
         }
     }
 
     func collectionView(_ collectionView: UICollectionView, contextMenuConfigurationForItemsAt indexPaths: [IndexPath], point: CGPoint) -> UIContextMenuConfiguration? {
         switch indexPaths.first.flatMap({ dataSource.itemIdentifier(for: $0) }) {
         case .trending(let t), .watchlist(let t): return titleMenu(t)
+        case .slot(let s): return s.title.map(titleMenu)
         default: return nil
         }
     }
@@ -236,91 +310,246 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
 
 // MARK: - Cells
 
-final class IntroCell: UICollectionViewCell {
+/// Date and a live clock, then how long you've got: the whole evening in one line.
+final class ProgrammeHeaderCell: UICollectionViewCell {
     var onDiscover: (() -> Void)?
     private let date = UILabel.make(Theme.label(), Theme.secondary)
-    private let empty = UILabel.make(Theme.display(40, weight: .black), Theme.text, lines: 0)
-    private let body = UILabel.make(Theme.text(.body), Theme.secondary, lines: 0)
+    private let time = UILabel.make(Theme.label(.caption2, weight: .bold))
+    private let dot = UIView()
+    private let headline = UILabel.make(Theme.display(66, weight: .black), Theme.text, lines: 0)
+    private let body = UILabel.make(Theme.text(.subheadline), Theme.secondary, lines: 0)
     private let button = PillButton("Find something to watch", image: "sparkle.magnifyingglass")
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        empty.setDisplay("NOTHING ON\nTONIGHT, YET.")
-        body.text = "Stash a film or start a show, and this is where tonight's picks will be waiting."
+        dot.backgroundColor = UIColor(red: 1, green: 0.35, blue: 0.3, alpha: 1)
+        dot.layer.cornerRadius = 3
+        dot.widthAnchor.constraint(equalToConstant: 6).isActive = true
+        dot.heightAnchor.constraint(equalToConstant: 6).isActive = true
+        let clock = UIStackView(arrangedSubviews: [dot, time])
+        clock.alignment = .center
+        clock.spacing = 6
+        let top = UIStackView(arrangedSubviews: [date, UIView(), clock])
+        top.alignment = .center
         button.addAction(UIAction { [weak self] _ in self?.onDiscover?() }, for: .primaryActionTriggered)
-        let stack = UIStackView(arrangedSubviews: [date, empty, body, button])
+        let stack = UIStackView(arrangedSubviews: [top, headline, body, button])
         stack.axis = .vertical
-        stack.spacing = 10
-        stack.setCustomSpacing(26, after: date)
+        stack.spacing = 12
+        stack.setCustomSpacing(18, after: top)
         stack.setCustomSpacing(22, after: body)
         contentView.addSubview(stack)
         stack.pin(to: contentView)
+        headline.accessibilityTraits = .header
+        if !UIAccessibility.isReduceMotionEnabled {
+            UIView.animate(withDuration: 1, delay: 0, options: [.autoreverse, .repeat, .allowUserInteraction]) { self.dot.alpha = 0.25 }
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(waiting: Int, empty isEmpty: Bool) {
-        var line = Date.now.formatted(.dateTime.weekday(.wide).day().month(.wide))
-        if waiting > 0 { line += " · \(waiting) show\(waiting == 1 ? "" : "s") waiting" }
-        date.setCaps(line)
-        [empty, body, button].forEach { $0.isHidden = !isEmpty }
+    func configure(doors: Date, lightsUp: Date, booked: Int, slots: Int, empty: Bool) {
+        let now = Date.now
+        date.setCaps(now.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)))
+        time.setCaps(now.formatted(.dateTime.hour().minute()), kern: 1.2)
+        button.isHidden = !empty
+        let left = max(Int(lightsUp.timeIntervalSince(now) / 60), 0)
+        let line1: String, line2: String
+        if empty {
+            (line1, line2) = ("Nothing on", "tonight, yet.")
+            body.text = "Stash a film or start a show, and tonight's programme builds itself here."
+        } else if doors > now, slots > 0 {
+            (line1, line2) = (DateText.runtime(booked), "on tonight")
+            body.text = "Doors at \(doors.formatted(.dateTime.hour().minute())). Here's what's showing, from what you're in the middle of."
+        } else {
+            (line1, line2) = (DateText.runtime(left), "till lights up")
+            if slots == 0 {
+                body.text = "Nothing in progress. Pick something and it'll be waiting here, on the clock."
+            } else if booked > left {
+                body.text = "Tonight's programme runs \(DateText.runtime(booked)). Something will spill into tomorrow."
+            } else {
+                body.text = "Tonight's programme, from what you're in the middle of. Tear a stub when you're done."
+            }
+        }
+        let text = NSMutableAttributedString(string: line1.uppercased() + "\n", attributes: [.foregroundColor: Theme.text])
+        text.append(NSAttributedString(string: line2.uppercased(), attributes: [.foregroundColor: Theme.tertiary]))
+        let style = NSMutableParagraphStyle()
+        style.lineHeightMultiple = 0.86
+        text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
+        headline.attributedText = text
     }
 }
 
-/// The next episode of a show as a big card: still, title like a poster, one button.
-final class UpNextCell: UICollectionViewCell {
-    var onWatched: (() -> Void)?
-    private let still = TiltCardView()
-    private let code = UILabel.make(Theme.label(.caption1, weight: .bold), Theme.accent)
-    private let show = UILabel.make(Theme.display(40, weight: .black), Theme.text, lines: 2)
-    private let episode = UILabel.make(Theme.text(.callout), Theme.secondary, lines: 1)
-    private let ticket = TicketButton()
+/// One slot on the programme: the start time in the gutter, a card as tall as the runtime, and a stub to tear.
+final class ProgrammeCell: UICollectionViewCell {
+    var onTorn: (() -> Void)?
+    let card = CardView()
+    private let time = UILabel.make(Theme.label(.caption2, weight: .bold), Theme.tertiary)
+    private let image = UIImageView()
+    private let shade = CAGradientLayer()
+    private let code = UILabel.make(Theme.label(.caption2, weight: .bold), UIColor(white: 1, alpha: 0.85))
+    private let corner = UILabel.make(Theme.label(.caption2, weight: .bold), UIColor(white: 1, alpha: 0.85))
+    private let name = UILabel.make(Theme.display(40, weight: .black), Theme.text, lines: 2)
+    private let sub = UILabel.make(Theme.text(.footnote), UIColor(white: 1, alpha: 0.82))
+    private let strip = FilmStripView()
+    private let stub = StubView()
+    private let dashed = CAShapeLayer()
+    private var height: NSLayoutConstraint!
     private var shownID = 0
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        still.maxAngle = 0.08
-        still.cornerRadius = 18
-        // Tear the stub off to mark it watched; the stub flies up and out of frame.
-        ticket.onStash = { [weak self] in
-            guard let self, let window else { return }
-            let target = CGPoint(x: window.bounds.maxX - 40, y: -60)
-            ticket.tear(to: target) { [weak self] in self?.onWatched?() }
+        card.layer.cornerRadius = 18
+        card.layer.cornerCurve = .continuous
+        card.clipsToBounds = true
+        card.backgroundColor = Theme.surfaceHigh
+        image.contentMode = .scaleAspectFill
+        shade.startPoint = CGPoint(x: 0, y: 0.5)
+        shade.endPoint = CGPoint(x: 1, y: 0.5)
+        dashed.fillColor = nil
+        dashed.strokeColor = UIColor(white: 1, alpha: 0.22).cgColor
+        dashed.lineWidth = 1.5
+        dashed.lineDashPattern = [5, 4]
+        card.layer.addSublayer(dashed)
+        card.onLayout = { [weak self] bounds in
+            guard let self else { return }
+            shade.frame = bounds
+            dashed.path = UIBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), cornerRadius: 17).cgPath
         }
-        let text = UIStackView(arrangedSubviews: [code, show, episode])
-        text.axis = .vertical
-        text.spacing = 4
-        let stack = UIStackView(arrangedSubviews: [still, text, ticket])
-        stack.axis = .vertical
-        stack.spacing = 18
-        stack.setCustomSpacing(20, after: text)
-        contentView.addSubview(stack)
-        stack.pin(to: contentView)
-        still.heightAnchor.constraint(equalTo: still.widthAnchor, multiplier: 0.5625).isActive = true
+        strip.frames = 14
+
+        let textStack = UIStackView(arrangedSubviews: [name, sub, strip])
+        textStack.axis = .vertical
+        textStack.spacing = 2
+        textStack.setCustomSpacing(10, after: sub)
+        [image, code, corner, textStack, stub].forEach { card.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        card.layer.insertSublayer(shade, above: image.layer)
+        [time, card].forEach { contentView.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        height = card.heightAnchor.constraint(equalToConstant: 120)
+        height.priority = .init(999)
+        let content = card.layoutMarginsGuide
+        card.directionalLayoutMargins = .init(top: 14, leading: 14, bottom: 14, trailing: 14)
+        NSLayoutConstraint.activate([
+            time.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            time.topAnchor.constraint(equalTo: card.topAnchor, constant: 4),
+            time.widthAnchor.constraint(equalToConstant: 52),
+            card.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 76),
+            card.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            card.topAnchor.constraint(equalTo: contentView.topAnchor),
+            card.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            height,
+            image.topAnchor.constraint(equalTo: card.topAnchor),
+            image.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            image.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            image.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            stub.topAnchor.constraint(equalTo: card.topAnchor),
+            stub.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            stub.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            stub.widthAnchor.constraint(equalToConstant: 52),
+            code.topAnchor.constraint(equalTo: content.topAnchor),
+            code.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            corner.firstBaselineAnchor.constraint(equalTo: code.firstBaselineAnchor),
+            corner.trailingAnchor.constraint(equalTo: stub.leadingAnchor, constant: -12),
+            textStack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            textStack.trailingAnchor.constraint(equalTo: stub.leadingAnchor, constant: -12),
+            textStack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            textStack.topAnchor.constraint(greaterThanOrEqualTo: code.bottomAnchor, constant: 6),
+            strip.heightAnchor.constraint(equalToConstant: 22),
+        ])
+        stub.onTorn = { [weak self] in self?.onTorn?() }
+        isAccessibilityElement = true
+        accessibilityTraits = .button
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(_ item: TonightViewController.UpNext) {
-        still.imageView.setImage(TMDB.imageURL(item.episode.stillPath, .backdrop) ?? TMDB.imageURL(item.show.backdropPath, .backdrop))
-        var bits = ["S\(item.episode.seasonNumber) · E\(item.episode.episodeNumber)"]
-        if let runtime = item.runtime { bits.append("\(runtime) min") }
-        bits.append(item.remaining > 1 ? "\(item.remaining) to go" : "Latest episode")
-        code.setCaps(bits.joined(separator: "  ·  "), kern: 1.2)
-        show.setDisplay(item.show.name.uppercased())
-        episode.text = item.episode.name
-        ticket.setTint(Theme.accent)
-        code.textColor = Theme.accent
-        let id = item.show.id
-        shownID = id
-        if let url = TMDB.imageURL(item.show.posterPath, .poster) {
-            Task { [weak self] in
-                guard let tint = await ImageLoader.shared.tint(for: url), let self, shownID == id else { return }
-                ticket.setTint(tint)
-                code.textColor = tint
-            }
-        }
-        ticket.configure(label: "Mark watched", symbol: "checkmark",
-                         accessibility: "Mark \(item.show.name) season \(item.episode.seasonNumber) episode \(item.episode.episodeNumber) watched")
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        stub.reset()
     }
+
+    func configure(_ slot: TonightViewController.Slot, start: Date, isNow: Bool) {
+        time.setCaps(isNow ? "Now" : start.formatted(.dateTime.hour().minute()), kern: 1)
+        time.textColor = isNow ? UIColor(red: 1, green: 0.35, blue: 0.3, alpha: 1) : Theme.tertiary
+        // Cards are as tall as they run, within reason.
+        height.constant = slot == .free ? 52 : min(max(CGFloat(slot.minutes) * 2.4, 124), 240)
+        let isFree = slot == .free
+        card.directionalLayoutMargins.top = isFree ? 19 : 14
+        [image, code, name, sub, stub].forEach { $0.isHidden = isFree }
+        dashed.isHidden = !isFree
+        card.backgroundColor = isFree ? .clear : Theme.surfaceHigh
+        shade.isHidden = isFree
+        strip.isHidden = true
+        corner.isHidden = true
+        name.font = Theme.display(height.constant < 150 ? 32 : 42, weight: .black)
+
+        switch slot {
+        case .episode(let u):
+            code.setCaps("S\(u.episode.seasonNumber) · E\(u.episode.episodeNumber) · \(u.runtime.map { "\($0) min" } ?? "Episode")", kern: 1.2)
+            name.setDisplay(u.show.name.uppercased())
+            sub.text = u.episode.name
+            stub.set("Watched")
+            show(TMDB.imageURL(u.episode.stillPath, .backdrop) ?? TMDB.imageURL(u.show.backdropPath, .backdrop), poster: u.show.posterPath, id: u.show.id)
+            accessibilityLabel = "\(u.show.name), season \(u.episode.seasonNumber) episode \(u.episode.episodeNumber), \(u.episode.name)"
+        case .film(let f):
+            let left = max(f.runtime - f.position / 60, 0)
+            code.setCaps("Film · \(left) min left", kern: 1.2)
+            corner.setCaps("Resume \(Self.clock(f.position))", kern: 1.2)
+            corner.isHidden = false
+            name.setDisplay(f.title.name.uppercased())
+            sub.text = nil
+            strip.isHidden = false
+            strip.value = Double(f.position) / Double(max(f.runtime * 60, 1))
+            stub.set("Finished")
+            show(TMDB.imageURL(f.title.backdropPath, .backdrop), poster: f.title.posterPath, id: f.title.id)
+            accessibilityLabel = "\(f.title.name), \(left) minutes left"
+        case .pick(let f):
+            code.setCaps("From your watchlist · \(DateText.runtime(f.runtime))", kern: 1.2)
+            name.setDisplay(f.title.name.uppercased())
+            sub.text = "It fits before lights up."
+            stub.set("Seen it")
+            show(TMDB.imageURL(f.title.backdropPath, .backdrop), poster: f.title.posterPath, id: f.title.id)
+            accessibilityLabel = "Suggestion from your watchlist: \(f.title.name)"
+        case .free:
+            code.isHidden = false
+            code.setCaps("Time to spare · find a short", kern: 1.2)
+            accessibilityLabel = "Time to spare. Find something short"
+        }
+        accessibilityCustomActions = isFree ? nil : [UIAccessibilityCustomAction(name: stub.accessibilityLabel ?? "Done") { [weak self] _ in
+            self?.stub.tear(); return true
+        }]
+    }
+
+    private func show(_ url: URL?, poster: String?, id: Int) {
+        shownID = id
+        image.setImage(url)
+        applyShade(Theme.surfaceHigh)
+        guard let p = TMDB.imageURL(poster, .poster) else { return }
+        Task { [weak self] in
+            guard let tint = await ImageLoader.shared.tint(for: p), let self, shownID == id else { return }
+            applyShade(tint)
+            strip.tint = tint
+        }
+    }
+
+    /// The still sits under a wash of the poster's colour, darkest where the words are.
+    private func applyShade(_ tint: UIColor) {
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        tint.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        let deep = UIColor(hue: h, saturation: min(s * 1.1, 1), brightness: 0.22, alpha: 0.94)
+        let mid = UIColor(hue: h, saturation: s, brightness: 0.45, alpha: 0.55)
+        shade.colors = [deep.cgColor, mid.cgColor, mid.withAlphaComponent(0.25).cgColor]
+        shade.locations = [0, 0.55, 1]
+    }
+
+    static func clock(_ seconds: Int) -> String {
+        String(format: "%d:%02d", seconds / 3600, seconds % 3600 / 60)
+    }
+
+    override var isHighlighted: Bool { didSet { Spring.press(card, isHighlighted, scale: 0.97) } }
+}
+
+/// A plain view that reports its layout, for layers that follow its size.
+final class CardView: UIView {
+    var onLayout: ((CGRect) -> Void)?
+    override func layoutSubviews() { super.layoutSubviews(); onLayout?(bounds) }
 }
 
 /// A schedule row: the date set large, like a departures board.
