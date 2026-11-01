@@ -5,7 +5,7 @@ import UIKit
 final class SettingsViewController: UITableViewController {
     private enum Row { case pass, icon, alerts, region, services, icloud, replay, version }
     private let sections: [(String?, [Row], String?)] = [
-        ("All-Access Pass", [.pass, .icon, .alerts], "Alerts come at six on the evening a new episode lands, and three days before a season premiere. Never more."),
+        (Pass.selling ? "All-Access Pass" : "Extras", Pass.selling ? [.pass, .icon, .alerts] : [.icon, .alerts], "Alerts come at six on the evening a new episode lands, and three days before a season premiere. Never more."),
         ("Watching from", [.region, .services], "Your services are highlighted on every title, so you know what's free to watch."),
         ("Sync", [.icloud], "Your stash syncs privately through your iCloud account."),
         ("Scene Stash", [.replay, .version], "This product uses the TMDB API but is not endorsed or certified by TMDB. Streaming availability provided by JustWatch."),
