@@ -22,6 +22,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>TMDBToken</key>
 	<string>$(TMDB_TOKEN)</string>
 	<key>UIApplicationSceneManifest</key>

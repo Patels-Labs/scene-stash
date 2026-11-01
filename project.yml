@@ -10,12 +10,15 @@ targets:
   SceneStash:
     type: application
     platform: iOS
-    sources: [SceneStash]
+    sources: [SceneStash, Shared]
+    dependencies:
+      - target: SceneStashWidgets
     entitlements:
       path: SceneStash/Resources/SceneStash.entitlements
       properties:
         com.apple.developer.icloud-container-identifiers: [iCloud.com.heetpatel.scenestash]
         com.apple.developer.icloud-services: [CloudKit]
+        com.apple.security.application-groups: [group.com.heetpatel.scenestash]
     info:
       path: SceneStash/Resources/Info.plist
       properties:
@@ -34,6 +37,7 @@ targets:
                 UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).SceneDelegate
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UIUserInterfaceStyle: Dark
+        NSSupportsLiveActivities: true
     settings:
       base:
         CODE_SIGN_STYLE: Automatic
@@ -41,6 +45,28 @@ targets:
         ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: AppIcon-Red AppIcon-Teal AppIcon-Silver AppIcon-Ink AppIcon-Diwali AppIcon-Christmas AppIcon-NewYear AppIcon-LunarNewYear AppIcon-Eid AppIcon-Holi AppIcon-Easter AppIcon-July4
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         GENERATE_INFOPLIST_FILE: NO
+  SceneStashWidgets:
+    type: app-extension
+    platform: iOS
+    sources: [Widgets, Shared]
+    entitlements:
+      path: Widgets/Widgets.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.heetpatel.scenestash]
+    info:
+      path: Widgets/Info.plist
+      properties:
+        CFBundleDisplayName: Scene Stash
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        CODE_SIGN_STYLE: Automatic
+        PRODUCT_BUNDLE_IDENTIFIER: com.heetpatel.scenestash.widgets
+        GENERATE_INFOPLIST_FILE: NO
+        SKIP_INSTALL: YES
 schemes:
   SceneStash:
     build:

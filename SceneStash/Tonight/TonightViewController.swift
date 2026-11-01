@@ -1,4 +1,5 @@
 import UIKit
+import WidgetKit
 
 /// Tonight's programme: what you're in the middle of, laid out on the clock from now until lights up.
 final class TonightViewController: UIViewController, UICollectionViewDelegate {
@@ -145,6 +146,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             upcoming = soon.sorted { $0.date < $1.date }
             collectionView.refreshControl?.endRefreshing()
             applySnapshot()
+            await writeWidgets()
             glow.show(TMDB.imageURL(programme.first?.title?.posterPath ?? trending.first?.posterPath, .poster))
         }
     }
@@ -196,6 +198,41 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         let midnight = cal.startOfDay(for: cal.date(byAdding: .day, value: 1, to: now) ?? now)
         let hour = cal.component(.hour, from: now)
         return hour >= 5 && midnight.timeIntervalSince(now) >= 3600 ? midnight : now.addingTimeInterval(2 * 3600)
+    }
+
+    /// Hands the Home Screen widgets what they show: the programme, the next premiere, and a punch card.
+    private func writeWidgets() async {
+        var snap = WidgetSnapshot()
+        snap.unlocked = Pass.shared.isUnlocked
+        snap.doors = doors
+        snap.booked = programme.reduce(0) { $0 + $1.minutes }
+        let times = startTimes()
+        for (slot, start) in zip(programme, times).prefix(4) {
+            guard let title = slot.title else { continue }
+            var tint = "F5B544"
+            if let url = TMDB.imageURL(title.posterPath, .poster), let color = await ImageLoader.shared.tint(for: url) { tint = color.hex }
+            let code: String
+            switch slot {
+            case .episode(let u): code = "S\(u.episode.seasonNumber) E\(u.episode.episodeNumber)"
+            case .film(let f): code = "\(max(f.runtime - f.position / 60, 0))m left"
+            default: code = DateText.runtime(slot.minutes)
+            }
+            snap.programme.append(.init(id: title.id, name: title.name, code: code, start: start, tint: tint))
+        }
+        if let next = upcoming.first(where: { $0.label.contains("premiere") || $0.label == "In cinemas" }) ?? upcoming.first {
+            snap.premiere = .init(id: next.title.id, name: next.title.name, label: next.label, date: next.date)
+        }
+        if let u = upNext.first, let detail = details[u.show.id] {
+            let season = u.episode.seasonNumber
+            let count = detail.mainSeasons.first { $0.seasonNumber == season }?.episodeCount ?? 0
+            let watched = Store.shared.watched(show: detail.id)
+            let holes = (1...max(count, 1)).map { e in
+                watched.contains(EpisodeKey(season: season, episode: e)) ? 1 : e == u.episode.episodeNumber ? 2 : 0
+            }
+            snap.card = .init(id: detail.id, name: detail.name, season: season, holes: count == 0 ? [] : holes, left: u.remaining)
+        }
+        snap.save()
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     /// The programme starts now in the evening; earlier in the day it waits for doors at eight.

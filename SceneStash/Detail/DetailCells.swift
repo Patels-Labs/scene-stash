@@ -223,18 +223,25 @@ final class EpisodeCell: UICollectionViewCell {
 }
 
 /// "Where you are" in a film: the time, a strip to scrub, and what that means for tonight.
+/// While a Start now session runs for this film, the strip moves by itself and the button pauses or resumes it.
 final class FilmProgressCell: UICollectionViewCell {
     var onCommit: ((Int) -> Void)?
     var onFinished: (() -> Void)?
+    var onStart: ((Int) -> Void)?
+    var onPause: (() -> Void)?
+    var onResume: (() -> Void)?
     let strip = FilmStripView()
     private let caption = UILabel.make(Theme.label(), Theme.secondary)
     private let percent = UILabel.make(Theme.label(.caption2, weight: .bold))
     private let clock = UILabel.make(Theme.display(54, weight: .black))
     private let total = UILabel.make(Theme.display(24, weight: .black), Theme.tertiary)
     private let note = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 0)
-    private let finished = PillButton("Finished it", image: "checkmark")
-    private let restart = PillButton("Start over", inverted: true)
+    private let primary = PillButton("Start now", image: "play.fill")
+    private let finished = PillButton("Finished it", inverted: true)
+    private let restart = UIButton(type: .system)
     private var runtime = 0
+    private var live: WatchSession.State?
+    private var ticker: Timer?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -243,7 +250,6 @@ final class FilmProgressCell: UICollectionViewCell {
         contentView.layer.cornerCurve = .continuous
         contentView.layer.borderWidth = 1
         contentView.layer.borderColor = UIColor(white: 1, alpha: 0.1).cgColor
-        caption.setCaps("Where you are")
         let top = UIStackView(arrangedSubviews: [caption, UIView(), percent])
         let time = UIStackView(arrangedSubviews: [clock, total, UIView()])
         time.alignment = .lastBaseline
@@ -252,47 +258,94 @@ final class FilmProgressCell: UICollectionViewCell {
         strip.heightAnchor.constraint(equalToConstant: 64).isActive = true
         strip.addAction(UIAction { [weak self] _ in self?.scrubbed() }, for: .valueChanged)
         strip.addAction(UIAction { [weak self] _ in self?.commit() }, for: .editingDidEnd)
+        primary.addAction(UIAction { [weak self] _ in self?.tapPrimary() }, for: .primaryActionTriggered)
         finished.addAction(UIAction { [weak self] _ in self?.onFinished?() }, for: .primaryActionTriggered)
+        restart.setTitle("START OVER", for: .normal)
+        restart.titleLabel?.font = Theme.label(.caption2, weight: .bold)
+        restart.tintColor = Theme.secondary
         restart.addAction(UIAction { [weak self] _ in
             self?.strip.value = 0
             self?.commit()
         }, for: .primaryActionTriggered)
-        let buttons = UIStackView(arrangedSubviews: [finished, restart])
+        let buttons = UIStackView(arrangedSubviews: [primary, finished])
         buttons.distribution = .fillEqually
         buttons.spacing = 10
-        let stack = UIStackView(arrangedSubviews: [top, time, strip, note, buttons])
+        let stack = UIStackView(arrangedSubviews: [top, time, strip, note, buttons, restart])
         stack.axis = .vertical
         stack.spacing = 12
         stack.setCustomSpacing(4, after: top)
         stack.setCustomSpacing(16, after: note)
+        stack.setCustomSpacing(4, after: buttons)
         contentView.addSubview(stack)
         stack.pin(to: contentView, inset: 18)
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(position: Int, runtime: Int, accent: UIColor) {
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        ticker?.invalidate()
+    }
+
+    func configure(position: Int, runtime: Int, accent: UIColor, live session: WatchSession.State?) {
         self.runtime = runtime
+        live = session
         strip.runtime = runtime
         strip.tint = accent
         percent.textColor = accent
-        if !strip.isTracking { strip.value = Double(position) / Double(max(runtime * 60, 1)) }
         total.text = "/ " + ProgrammeCell.clock(runtime * 60)
-        scrubbed()
+        strip.interactive = session == nil
+        ticker?.invalidate()
+        if let session {
+            caption.setCaps(session.pausedAt == nil ? "Now showing" : "Paused")
+            primary.configuration?.title = session.pausedAt == nil ? "Pause" : "Resume"
+            primary.configuration?.image = UIImage(systemName: session.pausedAt == nil ? "pause.fill" : "play.fill")
+            if session.pausedAt == nil {
+                ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.tick() } }
+            }
+            tick()
+        } else {
+            caption.setCaps("Where you are")
+            primary.configuration?.title = position > 0 ? "Resume" : "Start now"
+            primary.configuration?.image = UIImage(systemName: "play.fill")
+            if !strip.isTracking { strip.value = Double(position) / Double(max(runtime * 60, 1)) }
+            scrubbed()
+        }
+    }
+
+    private func tick() {
+        guard let live else { return }
+        strip.value = live.elapsed / Double(max(runtime * 60, 1))
+        let seconds = Int(live.elapsed)
+        clock.text = String(format: "%d:%02d:%02d", seconds / 3600, seconds % 3600 / 60, seconds % 60)
+        percent.setCaps("\(Int(strip.value * 100))%")
+        let left = max(runtime * 60 - seconds, 0) / 60
+        let ends = Date.now.addingTimeInterval(TimeInterval(left * 60)).formatted(.dateTime.hour().minute())
+        note.text = live.pausedAt == nil
+            ? "\(left) minutes left, ends \(ends). Pause from the Lock Screen if an ad or a break gets in the way."
+            : "Paused. The end time moves with you; resume when you're back."
+        restart.isHidden = true
     }
 
     private var seconds: Int { Int((strip.value * Double(runtime)).rounded()) * 60 }
 
     private func scrubbed() {
+        guard live == nil else { return }
         clock.text = ProgrammeCell.clock(seconds)
         percent.setCaps("\(Int(strip.value * 100))%")
         let left = runtime - seconds / 60
         restart.isHidden = seconds == 0
+        primary.configuration?.title = seconds > 0 ? "Resume" : "Start now"
         if seconds == 0 {
-            note.text = "Not started. Drag the strip to where you are, and it'll wait for you on Tonight."
+            note.text = "Not started. Tap Start now and it keeps time for you on the Lock Screen, or drag the strip to where you are."
         } else {
             let done = Date.now.addingTimeInterval(TimeInterval(left * 60)).formatted(.dateTime.hour().minute())
             note.text = "\(left) minutes left. Start now and you're done by \(done)."
         }
+    }
+
+    private func tapPrimary() {
+        guard let live else { onStart?(seconds); return }
+        live.pausedAt == nil ? onPause?() : onResume?()
     }
 
     private func commit() {

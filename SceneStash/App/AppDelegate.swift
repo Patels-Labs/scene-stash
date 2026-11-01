@@ -6,6 +6,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationC
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         Theme.applyAppearance()
         Pass.shared.start()
+        WatchSession.shared.installHooks()
         if Store.cloudEnabled { // unsigned local previews can't use the notification centre
             Alerts.registerCategory()
             UNUserNotificationCenter.current().delegate = self
