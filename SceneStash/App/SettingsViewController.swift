@@ -2,9 +2,9 @@ import CloudKit
 import UIKit
 
 final class SettingsViewController: UITableViewController {
-    private enum Row { case pass, icon, region, services, icloud, replay, version }
+    private enum Row { case pass, icon, alerts, region, services, icloud, replay, version }
     private let sections: [(String?, [Row], String?)] = [
-        ("All-Access Pass", [.pass, .icon], nil),
+        ("All-Access Pass", [.pass, .icon, .alerts], "Alerts come at six on the evening a new episode lands, and three days before a season premiere. Never more."),
         ("Watching from", [.region, .services], "Your services are highlighted on every title, so you know what's free to watch."),
         ("Sync", [.icloud], "Your stash syncs privately through your iCloud account."),
         ("Scene Stash", [.replay, .version], "This product uses the TMDB API but is not endorsed or certified by TMDB. Streaming availability provided by JustWatch."),
@@ -43,6 +43,7 @@ final class SettingsViewController: UITableViewController {
         let cell = tableView.dequeueReusableCell(withIdentifier: "cell", for: indexPath)
         var config = UIListContentConfiguration.valueCell()
         cell.accessoryType = .none
+        cell.accessoryView = nil
         cell.selectionStyle = .default
         switch sections[indexPath.section].1[indexPath.row] {
         case .pass:
@@ -63,6 +64,15 @@ final class SettingsViewController: UITableViewController {
             config.secondaryText = Pass.shared.isUnlocked ? nil : "Pass"
             config.image = UIImage(systemName: Pass.shared.isUnlocked ? "app.badge" : "lock.fill")
             cell.accessoryType = .disclosureIndicator
+        case .alerts:
+            config.text = "Premiere alerts"
+            config.image = UIImage(systemName: "bell.badge")
+            let toggle = UISwitch()
+            toggle.isOn = Alerts.enabled && Pass.shared.isUnlocked
+            toggle.onTintColor = Theme.accent
+            toggle.addAction(UIAction { [weak self, weak toggle] _ in self?.toggleAlerts(toggle) }, for: .valueChanged)
+            cell.accessoryView = toggle
+            cell.selectionStyle = .none
         case .region:
             config.text = "Region"
             config.secondaryText = Locale.current.localizedString(forRegionCode: Prefs.region) ?? Prefs.region
@@ -91,6 +101,28 @@ final class SettingsViewController: UITableViewController {
         config.imageProperties.tintColor = Theme.accent
         cell.contentConfiguration = config
         return cell
+    }
+
+    private func toggleAlerts(_ toggle: UISwitch?) {
+        guard let toggle else { return }
+        guard Pass.shared.isUnlocked else {
+            toggle.setOn(false, animated: true)
+            present(PaywallViewController(), animated: true)
+            return
+        }
+        if toggle.isOn {
+            Task {
+                let on = await Alerts.enable()
+                toggle.setOn(on, animated: true)
+                if !on {
+                    let alert = UIAlertController(title: "Notifications are off", message: "Turn on notifications for Scene Stash in Settings to get premiere alerts.", preferredStyle: .alert)
+                    alert.addAction(UIAlertAction(title: "OK", style: .default))
+                    present(alert, animated: true)
+                }
+            }
+        } else {
+            Alerts.disable()
+        }
     }
 
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
@@ -163,6 +195,28 @@ final class RegionViewController: UITableViewController, UISearchResultsUpdating
         return cell
     }
 
+    private func toggleAlerts(_ toggle: UISwitch?) {
+        guard let toggle else { return }
+        guard Pass.shared.isUnlocked else {
+            toggle.setOn(false, animated: true)
+            present(PaywallViewController(), animated: true)
+            return
+        }
+        if toggle.isOn {
+            Task {
+                let on = await Alerts.enable()
+                toggle.setOn(on, animated: true)
+                if !on {
+                    let alert = UIAlertController(title: "Notifications are off", message: "Turn on notifications for Scene Stash in Settings to get premiere alerts.", preferredStyle: .alert)
+                    alert.addAction(UIAlertAction(title: "OK", style: .default))
+                    present(alert, animated: true)
+                }
+            }
+        } else {
+            Alerts.disable()
+        }
+    }
+
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         Prefs.region = filtered[indexPath.row].iso31661
         Prefs.services = []
@@ -220,49 +274,196 @@ final class ServicesPickerView: UIView, UICollectionViewDataSource, UICollection
     }
 }
 
-/// Alternate ticket icons, one of the pass's extras.
-final class IconPickerViewController: UICollectionViewController {
-    private static let icons: [(name: String?, label: String)] = [
+/// "Ticket stock": alternate icons, one of the pass's extras. Holiday stock is listed only around its holiday,
+/// and only ever applied when you tap it.
+final class IconPickerViewController: UIViewController, UICollectionViewDelegate {
+    nonisolated private enum Section: Hashable { case hero, limited, stock }
+    nonisolated private enum Item: Hashable { case hero, limited(Holiday, Date), stock(String?) }
+    private static let stock: [(name: String?, label: String)] = [
         (nil, "Amber"), ("AppIcon-Red", "Red"), ("AppIcon-Teal", "Teal"), ("AppIcon-Silver", "Silver"), ("AppIcon-Ink", "Ink"),
     ]
 
-    init() {
-        let item = NSCollectionLayoutItem(layoutSize: .init(widthDimension: .fractionalWidth(1 / 3), heightDimension: .fractionalHeight(1)))
-        item.contentInsets = .init(top: 8, leading: 8, bottom: 8, trailing: 8)
-        let group = NSCollectionLayoutGroup.horizontal(layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .fractionalWidth(0.42)), subitems: [item])
-        let section = NSCollectionLayoutSection(group: group)
-        section.contentInsets = .init(top: 16, leading: 12, bottom: 16, trailing: 12)
-        super.init(collectionViewLayout: UICollectionViewCompositionalLayout(section: section))
-    }
-    required init?(coder: NSCoder) { fatalError() }
+    private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
+    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
 
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "App icon"
-        collectionView.backgroundColor = Theme.bg
-        collectionView.register(IconCell.self, forCellWithReuseIdentifier: "icon")
+        view.backgroundColor = Theme.bg
+        collectionView.backgroundColor = .clear
+        collectionView.delegate = self
+        view.addSubview(collectionView)
+        collectionView.pin(to: view)
+
+        let heroReg = UICollectionView.CellRegistration<IconHeroCell, Item> { cell, _, _ in
+            let current = UIApplication.shared.alternateIconName
+            cell.configure(image: UIImage(named: "Preview-" + (current ?? "AppIcon")), name: Self.label(for: current))
+        }
+        let limitedReg = UICollectionView.CellRegistration<LimitedIconCell, Item> { cell, _, item in
+            guard case .limited(let holiday, let ends) = item else { return }
+            cell.configure(holiday, ends: ends, selected: UIApplication.shared.alternateIconName == holiday.iconName)
+        }
+        let stockReg = UICollectionView.CellRegistration<IconCell, Item> { cell, _, item in
+            guard case .stock(let name) = item else { return }
+            cell.configure(image: UIImage(named: "Preview-" + (name ?? "AppIcon")), label: Self.label(for: name),
+                           selected: UIApplication.shared.alternateIconName == name)
+        }
+        let headerReg = UICollectionView.SupplementaryRegistration<SectionHeader>(elementKind: SectionHeader.kind) { [unowned self] header, _, indexPath in
+            switch dataSource.sectionIdentifier(for: indexPath.section) {
+            case .limited: header.configure("Limited run", caption: "Here for the holiday")
+            default: header.configure("Always printing")
+            }
+        }
+        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { cv, indexPath, item in
+            switch item {
+            case .hero: cv.dequeueConfiguredReusableCell(using: heroReg, for: indexPath, item: item)
+            case .limited: cv.dequeueConfiguredReusableCell(using: limitedReg, for: indexPath, item: item)
+            case .stock: cv.dequeueConfiguredReusableCell(using: stockReg, for: indexPath, item: item)
+            }
+        }
+        dataSource.supplementaryViewProvider = { cv, _, indexPath in cv.dequeueConfiguredReusableSupplementary(using: headerReg, for: indexPath) }
+
+        var snap = NSDiffableDataSourceSnapshot<Section, Item>()
+        snap.appendSections([.hero]); snap.appendItems([.hero])
+        let limited = Holiday.available()
+        if !limited.isEmpty { snap.appendSections([.limited]); snap.appendItems(limited.map { .limited($0.0, $0.ends) }) }
+        snap.appendSections([.stock]); snap.appendItems(Self.stock.map { .stock($0.name) })
+        dataSource.apply(snap, animatingDifferences: false)
     }
 
-    override func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int { Self.icons.count }
-
-    override func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "icon", for: indexPath) as! IconCell
-        let icon = Self.icons[indexPath.item]
-        cell.configure(image: UIImage(named: "Preview-" + (icon.name ?? "AppIcon")), label: icon.label,
-                       selected: UIApplication.shared.alternateIconName == icon.name)
-        return cell
+    private static func label(for name: String?) -> String {
+        stock.first { $0.name == name }?.label ?? Holiday.allCases.first { $0.iconName == name }?.title ?? "Amber"
     }
 
-    override func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        let name = Self.icons[indexPath.item].name
+    private func makeLayout() -> UICollectionViewLayout {
+        UICollectionViewCompositionalLayout { [weak self] index, _ in
+            let full = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(120))
+            switch self?.dataSource?.sectionIdentifier(for: index) {
+            case .hero:
+                let s = NSCollectionLayoutSection(group: .vertical(layoutSize: full, subitems: [NSCollectionLayoutItem(layoutSize: full)]))
+                s.contentInsets = .init(top: 12, leading: 20, bottom: 24, trailing: 20)
+                return s
+            case .limited:
+                let s = NSCollectionLayoutSection(group: .vertical(layoutSize: full, subitems: [NSCollectionLayoutItem(layoutSize: full)]))
+                s.interGroupSpacing = 10
+                s.contentInsets = .init(top: 10, leading: 16, bottom: 26, trailing: 16)
+                s.boundarySupplementaryItems = [Layouts.headerItem()]
+                return s
+            default:
+                let item = NSCollectionLayoutItem(layoutSize: .init(widthDimension: .fractionalWidth(0.2), heightDimension: .estimated(90)))
+                let group = NSCollectionLayoutGroup.horizontal(layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .estimated(90)), subitems: [item])
+                group.interItemSpacing = .fixed(10)
+                let s = NSCollectionLayoutSection(group: group)
+                s.contentInsets = .init(top: 10, leading: 16, bottom: 30, trailing: 16)
+                s.boundarySupplementaryItems = [Layouts.headerItem()]
+                return s
+            }
+        }
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        let name: String?
+        switch dataSource.itemIdentifier(for: indexPath) {
+        case .limited(let holiday, _): name = holiday.iconName
+        case .stock(let n): name = n
+        default: return
+        }
         guard UIApplication.shared.alternateIconName != name else { return }
         UIApplication.shared.setAlternateIconName(name) { [weak self] error in
             guard error == nil else { return }
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
                 Haptics.success()
-                self?.collectionView.reloadData()
+                guard let self else { return }
+                var snap = dataSource.snapshot()
+                snap.reconfigureItems(snap.itemIdentifiers)
+                dataSource.apply(snap, animatingDifferences: false)
             }
         }
+    }
+}
+
+/// The icon you have now, big and tilted, with its name.
+private final class IconHeroCell: UICollectionViewCell {
+    private let image = UIImageView()
+    private let name = UILabel.make(Theme.display(32, weight: .black))
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        image.layer.cornerRadius = 40
+        image.layer.cornerCurve = .continuous
+        image.clipsToBounds = true
+        image.backgroundColor = Theme.surface
+        image.transform = CGAffineTransform(rotationAngle: -0.1)
+        name.textAlignment = .center
+        let title = UILabel.make(Theme.display(52, weight: .black))
+        title.text = "TICKET STOCK"
+        let sub = UILabel.make(Theme.text(.subheadline), Theme.secondary, lines: 0)
+        sub.text = "Pick the paper your tickets are printed on. Your Home Screen follows."
+        let stack = UIStackView(arrangedSubviews: [title, sub, image, name])
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 8
+        stack.setCustomSpacing(26, after: sub)
+        stack.setCustomSpacing(22, after: image)
+        contentView.addSubview(stack)
+        stack.pin(to: contentView)
+        NSLayoutConstraint.activate([image.widthAnchor.constraint(equalToConstant: 170), image.heightAnchor.constraint(equalToConstant: 170)])
+        sub.textAlignment = .center
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(image picture: UIImage?, name text: String) {
+        image.image = picture
+        name.text = text.uppercased()
+    }
+}
+
+/// A holiday icon on offer: dashed edge, when it leaves, and the reassurance that nothing changes unless you tap it.
+private final class LimitedIconCell: UICollectionViewCell {
+    private let image = UIImageView()
+    private let caption = UILabel.make(Theme.label(.caption2, weight: .bold), UIColor(red: 1, green: 0.7, blue: 0.35, alpha: 1))
+    private let name = UILabel.make(Theme.display(28, weight: .black))
+    private let note = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 0)
+    private let border = CAShapeLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        border.fillColor = nil
+        border.lineWidth = 1.5
+        border.lineDashPattern = [5, 4]
+        contentView.layer.addSublayer(border)
+        image.layer.cornerRadius = 15
+        image.layer.cornerCurve = .continuous
+        image.clipsToBounds = true
+        note.text = "Yours to pick while it's here. Nothing changes unless you tap it."
+        let text = UIStackView(arrangedSubviews: [caption, name, note])
+        text.axis = .vertical
+        text.spacing = 4
+        let row = UIStackView(arrangedSubviews: [image, text])
+        row.spacing = 14
+        row.alignment = .center
+        contentView.addSubview(row)
+        row.pin(to: contentView, inset: 14)
+        NSLayoutConstraint.activate([image.widthAnchor.constraint(equalToConstant: 66), image.heightAnchor.constraint(equalToConstant: 66)])
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        border.path = UIBezierPath(roundedRect: contentView.bounds.insetBy(dx: 1, dy: 1), cornerRadius: 18).cgPath
+    }
+
+    func configure(_ holiday: Holiday, ends: Date, selected: Bool) {
+        image.image = UIImage(named: "Preview-" + holiday.iconName)
+        let last = ends.addingTimeInterval(-1).formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+        caption.setCaps(selected ? "On now · listed until \(last)" : "Limited run · until \(last)")
+        name.text = holiday.title.uppercased()
+        border.strokeColor = (selected ? Theme.accent : UIColor(red: 1, green: 0.7, blue: 0.35, alpha: 0.5)).cgColor
+        border.lineDashPattern = selected ? nil : [5, 4]
+        accessibilityLabel = "\(holiday.title) icon, available until \(last)"
+        accessibilityTraits = selected ? [.button, .selected] : .button
     }
 }
 
@@ -272,7 +473,7 @@ private final class IconCell: UICollectionViewCell {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        image.layer.cornerRadius = 22
+        image.layer.cornerRadius = 14
         image.layer.cornerCurve = .continuous
         image.clipsToBounds = true
         image.backgroundColor = Theme.surface
@@ -292,6 +493,7 @@ private final class IconCell: UICollectionViewCell {
     func configure(image picture: UIImage?, label text: String, selected: Bool) {
         image.image = picture
         image.layer.borderWidth = selected ? 3 : 0
+        image.alpha = selected ? 1 : 0.8
         label.setCaps(text)
         label.textColor = selected ? Theme.text : Theme.secondary
         accessibilityLabel = "\(text) icon"

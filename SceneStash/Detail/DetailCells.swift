@@ -376,6 +376,67 @@ final class PunchCardCell: UICollectionViewCell {
     }
 }
 
+/// "Stay seated": what's waiting during and after the credits, as a dashed ticket.
+final class StingerCell: UICollectionViewCell {
+    private let caption = UILabel.make(Theme.label(.caption2, weight: .bold), Theme.accent)
+    private let title = UILabel.make(Theme.display(26, weight: .black), Theme.text, lines: 0)
+    private let detail = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 0)
+    private let count = UILabel.make(Theme.display(34, weight: .black), Theme.accent)
+    private let border = CAShapeLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentView.backgroundColor = Theme.accent.withAlphaComponent(0.08)
+        contentView.layer.cornerRadius = 16
+        contentView.layer.cornerCurve = .continuous
+        border.fillColor = nil
+        border.lineWidth = 1.5
+        border.lineDashPattern = [5, 4]
+        border.strokeColor = Theme.accent.withAlphaComponent(0.45).cgColor
+        contentView.layer.addSublayer(border)
+        caption.setCaps("Stay seated")
+        let extra = UILabel.make(Theme.label(.caption2, weight: .bold), Theme.secondary)
+        extra.setCaps("Extra")
+        let stub = UIStackView(arrangedSubviews: [count, extra])
+        stub.axis = .vertical
+        stub.alignment = .center
+        stub.spacing = 2
+        stub.widthAnchor.constraint(equalToConstant: 62).isActive = true
+        let text = UIStackView(arrangedSubviews: [caption, title, detail])
+        text.axis = .vertical
+        text.spacing = 4
+        let row = UIStackView(arrangedSubviews: [text, stub])
+        row.alignment = .center
+        row.spacing = 12
+        contentView.addSubview(row)
+        row.pin(to: contentView, inset: 14)
+        isAccessibilityElement = true
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        border.path = UIBezierPath(roundedRect: contentView.bounds.insetBy(dx: 0.75, dy: 0.75), cornerRadius: 16).cgPath
+    }
+
+    func configure(mid: Bool, after: Bool) {
+        let n = (mid ? 1 : 0) + (after ? 1 : 0)
+        count.text = "\(n)"
+        switch (mid, after) {
+        case (true, true):
+            title.text = "SCENES DURING AND AFTER THE CREDITS"
+            detail.text = "One partway through, one at the very end. Don't leave early."
+        case (true, false):
+            title.text = "A SCENE DURING THE CREDITS"
+            detail.text = "Hang on through the first part of the credits."
+        default:
+            title.text = "A SCENE AFTER THE CREDITS"
+            detail.text = "Wait for the very end."
+        }
+        accessibilityLabel = "Stay seated. " + (title.text ?? "").capitalized + ". " + (detail.text ?? "")
+    }
+}
+
 enum DateText {
     private static let parser: DateFormatter = {
         let f = DateFormatter()

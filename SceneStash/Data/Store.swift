@@ -35,6 +35,8 @@ final class Tracked: NSManagedObject {
     @NSManaged var watchedAt: Date?
     /// How far into a film you are, in seconds; 0 when not started or finished.
     @NSManaged var position: Int32
+    /// Your line on the film's stub in the stub book.
+    @NSManaged var note: String?
 
     var mediaType: MediaType { MediaType(rawValue: mediaTypeRaw ?? "") ?? .movie }
     var status: TrackStatus {
@@ -55,6 +57,42 @@ final class WatchedEpisode: NSManagedObject {
     @NSManaged var watchedAt: Date?
 
     var key: EpisodeKey { EpisodeKey(season: Int(season), episode: Int(episode)) }
+}
+
+/// A saved marathon. Pieces and days are stored as JSON so the plan can change shape freely.
+@objc(Marathon)
+final class Marathon: NSManagedObject {
+    @NSManaged var uuid: String?
+    @NSManaged var name: String?
+    @NSManaged var piecesData: Data?
+    @NSManaged var daysData: Data?
+    @NSManaged var breakMinutes: Int16
+    @NSManaged var runOver: Bool
+    @NSManaged var createdAt: Date?
+
+    var pieces: [Piece] {
+        get { piecesData.flatMap { try? JSONDecoder().decode([Piece].self, from: $0) } ?? [] }
+        set { piecesData = try? JSONEncoder().encode(newValue) }
+    }
+    var days: [MarathonDay] {
+        get { daysData.flatMap { try? JSONDecoder().decode([MarathonDay].self, from: $0) } ?? [] }
+        set { daysData = try? JSONEncoder().encode(newValue) }
+    }
+
+    /// What's still to watch: films not yet seen, episodes not yet punched.
+    @MainActor var remaining: [Piece] {
+        pieces.filter { p in
+            if p.isEpisode, let s = p.season, let e = p.episode { return !Store.shared.watched(show: p.id).contains(EpisodeKey(season: s, episode: e)) }
+            return Store.shared.tracked(p.id, .movie)?.status != .seen
+        }
+    }
+
+    /// The plan for what's left, from today on. Today's doors open no earlier than now.
+    @MainActor func upcomingPlan(now: Date = .now) -> [(day: MarathonDay, slots: [PlannedSlot])] {
+        let ahead = days.filter { $0.end > now }.map { MarathonDay(start: max($0.start, now), end: $0.end) }
+        let plan = MarathonPlan.plan(remaining, days: ahead, breakMinutes: Int(breakMinutes), runOver: runOver)
+        return Array(zip(ahead, plan.days)).map { ($0, $1) }
+    }
 }
 
 /// The user's library. Core Data mirrored to iCloud; views observe
@@ -159,6 +197,42 @@ final class Store {
         save()
     }
 
+    func setNote(_ note: String?, for title: Title) {
+        guard let item = tracked(title.id, title.mediaType) else { return }
+        let trimmed = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        item.note = trimmed?.isEmpty == false ? trimmed : nil
+        save()
+    }
+
+    func marathons() -> [Marathon] {
+        let request = NSFetchRequest<Marathon>(entityName: "Marathon")
+        request.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
+        return (try? context.fetch(request)) ?? []
+    }
+
+    func newMarathon(name: String, pieces: [Piece], days: [MarathonDay], breakMinutes: Int, runOver: Bool) -> Marathon {
+        let m = Marathon(context: context)
+        m.uuid = UUID().uuidString
+        m.createdAt = .now
+        m.name = name
+        m.pieces = pieces
+        m.days = days
+        m.breakMinutes = Int16(breakMinutes)
+        m.runOver = runOver
+        save()
+        return m
+    }
+
+    /// Today's slice of whichever marathon has something planned for today.
+    func marathonToday(now: Date = .now) -> (Marathon, MarathonDay, [PlannedSlot])? {
+        for m in marathons() {
+            if let today = m.upcomingPlan(now: now).first(where: { Calendar.current.isDate($0.day.start, inSameDayAs: now) && !$0.slots.isEmpty }) {
+                return (m, today.day, today.slots)
+            }
+        }
+        return nil
+    }
+
     func remove(_ title: Title) {
         if let item = tracked(title.id, title.mediaType) { context.delete(item) }
         if title.mediaType == .tv { episodes(show: title.id).forEach(context.delete) }
@@ -223,7 +297,7 @@ final class Store {
             attr("posterPath", .stringAttributeType), attr("backdropPath", .stringAttributeType),
             attr("releaseDate", .stringAttributeType), attr("rating", .integer16AttributeType, 0),
             attr("runtime", .integer32AttributeType, 0), attr("addedAt", .dateAttributeType),
-            attr("watchedAt", .dateAttributeType), attr("position", .integer32AttributeType, 0),
+            attr("watchedAt", .dateAttributeType), attr("position", .integer32AttributeType, 0), attr("note", .stringAttributeType),
         ]
         let episode = NSEntityDescription()
         episode.name = "WatchedEpisode"
@@ -233,8 +307,17 @@ final class Store {
             attr("episode", .integer16AttributeType, 0), attr("runtime", .integer32AttributeType, 0),
             attr("watchedAt", .dateAttributeType),
         ]
+        let marathon = NSEntityDescription()
+        marathon.name = "Marathon"
+        marathon.managedObjectClassName = NSStringFromClass(Marathon.self)
+        marathon.properties = [
+            attr("uuid", .stringAttributeType), attr("name", .stringAttributeType),
+            attr("piecesData", .binaryDataAttributeType), attr("daysData", .binaryDataAttributeType),
+            attr("breakMinutes", .integer16AttributeType, 15), attr("runOver", .booleanAttributeType, true),
+            attr("createdAt", .dateAttributeType),
+        ]
         let model = NSManagedObjectModel()
-        model.entities = [tracked, episode]
+        model.entities = [tracked, episode, marathon]
         return model
     }()
 }

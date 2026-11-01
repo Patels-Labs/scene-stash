@@ -2,9 +2,9 @@ import UIKit
 
 /// A title as an object: the poster card floats centre stage under its own light, with everything else below.
 final class DetailViewController: UIViewController, UICollectionViewDelegate {
-    nonisolated private enum Section: Hashable { case hero, progress, punchCard, episodes, overview, providers, cast, more }
+    nonisolated private enum Section: Hashable { case hero, progress, stingers, punchCard, episodes, overview, providers, cast, more }
     nonisolated private enum Item: Hashable {
-        case hero, overview, progress, punchCard
+        case hero, overview, progress, stingers, punchCard
         case provider(Provider), cast(CastMember), episode(Episode), title(Title)
     }
 
@@ -33,6 +33,8 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
     private let ratingBox = UIStackView()
     private let reel = ReelRatingView()
     private let trailerButton = UIButton(configuration: .glass())
+    private let marathonButton = UIButton(configuration: .glass())
+    private let buttonRow = UIStackView()
 
     init(title: Title) {
         item = title
@@ -174,7 +176,15 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         titles.axis = .vertical
         titles.spacing = 6
         titles.setCustomSpacing(14, after: meta)
-        let trailerRow = UIStackView(arrangedSubviews: [trailerButton])
+        marathonButton.configuration?.title = "Plan a marathon"
+        marathonButton.configuration?.image = UIImage(systemName: "calendar.badge.clock")
+        marathonButton.configuration?.imagePadding = 8
+        marathonButton.configuration?.titleTextAttributesTransformer = trailerButton.configuration?.titleTextAttributesTransformer
+        marathonButton.addAction(UIAction { [weak self] _ in self?.withPass { self?.planMarathon() } }, for: .primaryActionTriggered)
+        buttonRow.addArrangedSubview(trailerButton)
+        buttonRow.addArrangedSubview(marathonButton)
+        buttonRow.spacing = 10
+        let trailerRow = UIStackView(arrangedSubviews: [buttonRow])
         trailerRow.axis = .vertical
         trailerRow.alignment = .center
 
@@ -211,7 +221,9 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         let rating = Int(tracked?.rating ?? 0)
         if !ratingBox.isHidden, reel.value != rating, !reel.isInteracting { reel.set(rating, animated: false) }
         poster.foil = rating >= 9
-        trailerButton.superview?.isHidden = d?.trailerURL == nil
+        trailerButton.isHidden = d?.trailerURL == nil
+        marathonButton.isHidden = d.map { item.mediaType == .movie ? $0.collection == nil : $0.mainSeasons.isEmpty } ?? true
+        buttonRow.superview?.isHidden = trailerButton.isHidden && marathonButton.isHidden
 
         if item.mediaType == .tv, let d {
             let remaining = Progress.remaining(seasons: seasonMap, watched: watched, aired: airedKey)
@@ -276,6 +288,50 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         }
         let anchor = find(tabBar) ?? tabBar
         return anchor.convert(CGPoint(x: anchor.bounds.midX, y: anchor.bounds.midY), to: window)
+    }
+
+    /// A film series becomes a marathon of every released part; a show, the rest of the selected season.
+    private func planMarathon() {
+        guard let detail else { return }
+        Haptics.tap()
+        if item.mediaType == .movie, let series = detail.collection {
+            marathonButton.isEnabled = false
+            Task {
+                defer { marathonButton.isEnabled = true }
+                let parts = (try? await TMDB.shared.collection(series.id)) ?? []
+                var runtimes: [Int: Int] = [:]
+                await withTaskGroup(of: (Int, Int?).self) { group in
+                    for part in parts { group.addTask { (part.id, try? await TMDB.shared.detail(part.id, .movie).runtime) } }
+                    for await (id, runtime) in group { runtimes[id] = runtime }
+                }
+                // ponytail: unseen parts only; rewatch marathons would need per-marathon progress.
+                let pieces = parts.filter { Store.shared.tracked($0.id, .movie)?.status != .seen }
+                    .map { Piece(id: $0.id, isEpisode: false, name: $0.name, detail: nil, poster: $0.posterPath, backdrop: $0.backdropPath, minutes: runtimes[$0.id] ?? 120) }
+                guard !pieces.isEmpty else {
+                    let alert = UIAlertController(title: "You've seen the lot", message: "Every film in \(series.name) is already in your Seen shelf.", preferredStyle: .alert)
+                    alert.addAction(UIAlertAction(title: "OK", style: .default))
+                    present(alert, animated: true)
+                    return
+                }
+                let name = series.name.replacingOccurrences(of: " Collection", with: "")
+                navigationController?.pushViewController(MarathonPlannerViewController(name: name, pieces: pieces), animated: true)
+            }
+        } else if let season = selectedSeason {
+            let episodes = (seasonEpisodes[season] ?? []).filter {
+                DateText.isPast($0.airDate) && !watched.contains(EpisodeKey(season: $0.seasonNumber, episode: $0.episodeNumber))
+            }
+            guard !episodes.isEmpty else {
+                let alert = UIAlertController(title: "Season \(season) is all watched", message: "Pick another season on the punch card.", preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "OK", style: .default))
+                present(alert, animated: true)
+                return
+            }
+            let pieces = episodes.map {
+                Piece(id: detail.id, isEpisode: true, name: detail.name, detail: $0.name, poster: detail.posterPath, backdrop: $0.stillPath ?? detail.backdropPath,
+                      minutes: $0.runtime ?? detail.runtime ?? 45, season: $0.seasonNumber, episode: $0.episodeNumber)
+            }
+            navigationController?.pushViewController(MarathonPlannerViewController(name: "\(detail.name) · Season \(season)", pieces: pieces), animated: true)
+        }
     }
 
     private func share() {
@@ -367,13 +423,13 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
                 s = list(spacing: 0)
                 s.contentInsets = .init(top: 20, leading: 0, bottom: 30, trailing: 0)
                 return s
-            case .overview, .progress, .punchCard, .cast, .episodes: s = list(spacing: 0)
+            case .overview, .progress, .stingers, .punchCard, .cast, .episodes: s = list(spacing: 0)
             case .providers: s = row(width: .estimated(150), height: 68, spacing: 10)
             case .more: s = row(width: .absolute(112), height: 168, spacing: 10)
             }
             s.contentInsets = .init(top: 12, leading: 22, bottom: 38, trailing: 22)
-            if section == .progress || section == .punchCard { s.contentInsets = .init(top: 0, leading: 16, bottom: 34, trailing: 16) }
-            if ![.overview, .progress, .punchCard].contains(section) { s.boundarySupplementaryItems = [Layouts.headerItem()] }
+            if section == .progress || section == .punchCard || section == .stingers { s.contentInsets = .init(top: 0, leading: 16, bottom: 34, trailing: 16) }
+            if ![.overview, .progress, .stingers, .punchCard].contains(section) { s.boundarySupplementaryItems = [Layouts.headerItem()] }
             return s
         }
     }
@@ -400,6 +456,9 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
                 Store.shared.track(title, status: .seen, runtime: runtime)
                 Haptics.success()
             }
+        }
+        let stingerReg = UICollectionView.CellRegistration<StingerCell, Item> { [unowned self] cell, _, _ in
+            cell.configure(mid: detail?.midCredits ?? false, after: detail?.afterCredits ?? false)
         }
         let punchReg = UICollectionView.CellRegistration<PunchCardCell, Item> { [unowned self] cell, _, _ in
             let card = cell.card
@@ -453,6 +512,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             case .cast: cv.dequeueConfiguredReusableCell(using: castReg, for: indexPath, item: item)
             case .progress: cv.dequeueConfiguredReusableCell(using: progressReg, for: indexPath, item: item)
             case .punchCard: cv.dequeueConfiguredReusableCell(using: punchReg, for: indexPath, item: item)
+            case .stingers: cv.dequeueConfiguredReusableCell(using: stingerReg, for: indexPath, item: item)
             case .episode: cv.dequeueConfiguredReusableCell(using: episodeReg, for: indexPath, item: item)
             case .title: cv.dequeueConfiguredReusableCell(using: posterReg, for: indexPath, item: item)
             }
@@ -469,6 +529,9 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         let status = Store.shared.tracked(item.id, item.mediaType)?.status
         if item.mediaType == .movie, (detail?.runtime ?? 0) > 0, status != .seen {
             snap.appendSections([.progress]); snap.appendItems([.progress])
+        }
+        if let d = detail, d.midCredits || d.afterCredits {
+            snap.appendSections([.stingers]); snap.appendItems([.stingers])
         }
         if let seasons = detail?.mainSeasons, !seasons.isEmpty {
             snap.appendSections([.punchCard]); snap.appendItems([.punchCard])

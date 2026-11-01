@@ -10,7 +10,7 @@ APP="$OUT/SceneStash.app"
 rm -rf "$APP" && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 swiftc -sdk "$SDK" -target arm64-apple-ios26.0-macabi \
   -Fsystem "$SDK/System/iOSSupport/System/Library/Frameworks" -L "$SDK/System/iOSSupport/usr/lib" \
-  -swift-version 6 -default-isolation MainActor -Onone \
+  -swift-version 6 -default-isolation MainActor -Onone -D DEBUG \
   $(find SceneStash -name '*.swift') -o "$APP/Contents/MacOS/SceneStash"
 sed -e 's/$(PRODUCT_MODULE_NAME)/SceneStash/; s/$(MARKETING_VERSION)/1.0/; s/$(CURRENT_PROJECT_VERSION)/1/' \
   -e "s|\$(TMDB_TOKEN)|${TMDB_TOKEN}|" SceneStash/Resources/Info.plist > "$APP/Contents/Info.plist"

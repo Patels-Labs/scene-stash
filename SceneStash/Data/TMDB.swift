@@ -118,6 +118,11 @@ nonisolated struct TitleDetail: Decodable, Sendable {
     let trailerURL: URL?
     let providers: [String: RegionProviders]
     let recommendations: [Title]
+    /// Scenes during or after the credits, from TMDB's community keywords (so absence isn't proof).
+    let midCredits: Bool
+    let afterCredits: Bool
+    /// The film series this belongs to, for planning a marathon of the lot.
+    let collection: (id: Int, name: String)?
 
     var year: String? { date.map { String($0.prefix(4)) } }
     /// Seasons that count toward progress (specials excluded).
@@ -127,12 +132,19 @@ nonisolated struct TitleDetail: Decodable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, title, name, tagline, overview, posterPath, backdropPath, releaseDate, firstAirDate
         case runtime, episodeRunTime, genres, voteAverage, status, seasons, lastEpisodeToAir, nextEpisodeToAir
-        case credits, videos, recommendations, createdBy
+        case credits, videos, recommendations, createdBy, keywords, belongsToCollection
         case watchProviders = "watch/providers"
     }
     private struct Crew: Decodable { let name: String; let job: String? }
     private struct Credits: Decodable { let cast: [CastMember]; let crew: [Crew]? }
+    private struct Series: Decodable { let id: Int; let name: String }
     private struct Providers: Decodable { let results: [String: RegionProviders] }
+    /// Films nest keywords under `keywords`, shows under `results`.
+    private struct Keywords: Decodable {
+        struct Keyword: Decodable { let id: Int }
+        let keywords: [Keyword]?
+        let results: [Keyword]?
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -173,6 +185,10 @@ nonisolated struct TitleDetail: Decodable, Sendable {
             .flatMap { URL(string: "https://www.youtube.com/watch?v=\($0.key)") }
         providers = try c.decodeIfPresent(Providers.self, forKey: .watchProviders)?.results ?? [:]
         recommendations = (try? c.decodeIfPresent(Page<Title>.self, forKey: .recommendations)?.results) ?? []
+        let tags = (try? c.decodeIfPresent(Keywords.self, forKey: .keywords)).flatMap { $0?.keywords ?? $0?.results } ?? []
+        collection = (try? c.decodeIfPresent(Series.self, forKey: .belongsToCollection)).flatMap { $0 }.map { ($0.id, $0.name) }
+        midCredits = tags.contains { $0.id == 179431 } // "duringcreditsstinger"
+        afterCredits = tags.contains { $0.id == 179430 } // "aftercreditsstinger"
     }
 }
 
@@ -254,7 +270,7 @@ final class TMDB {
     }
 
     func detail(_ id: Int, _ type: MediaType) async throws -> TitleDetail {
-        try await get("\(type.rawValue)/\(id)", ["append_to_response": "credits,videos,watch/providers,recommendations"])
+        try await get("\(type.rawValue)/\(id)", ["append_to_response": "credits,videos,watch/providers,recommendations,keywords"])
     }
 
     func season(show: Int, number: Int) async throws -> Season {
@@ -268,6 +284,13 @@ final class TMDB {
         return try await (movie.results + tv.results)
             .sorted { ($0.displayPriority ?? 999) < ($1.displayPriority ?? 999) }
             .filter { seen.insert($0.providerId).inserted }
+    }
+
+    /// A film series' parts in release order, unreleased ones left out.
+    func collection(_ id: Int) async throws -> [Title] {
+        struct Collection: Decodable { let parts: [Title] }
+        let c: Collection = try await get("collection/\(id)")
+        return c.parts.filter { DateText.isPast($0.date) }.sorted { ($0.date ?? "") < ($1.date ?? "") }
     }
 
     func regions() async throws -> [Region] {
