@@ -16,7 +16,7 @@ final class SettingsViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Settings"
-        tableView.backgroundColor = Theme.ink
+        tableView.backgroundColor = Theme.bg
         navigationItem.rightBarButtonItem = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { [weak self] _ in self?.dismiss(animated: true) })
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "cell")
         Task {
@@ -68,7 +68,7 @@ final class SettingsViewController: UITableViewController {
             config.image = UIImage(systemName: "ticket")
             cell.selectionStyle = .none
         }
-        config.imageProperties.tintColor = Theme.amber
+        config.imageProperties.tintColor = Theme.accent
         cell.contentConfiguration = config
         return cell
     }
@@ -80,7 +80,7 @@ final class SettingsViewController: UITableViewController {
         case .services:
             let vc = UIViewController()
             vc.title = "Streaming services"
-            vc.view.backgroundColor = Theme.ink
+            vc.view.backgroundColor = Theme.bg
             let picker = ServicesPickerView()
             vc.view.addSubview(picker)
             picker.pin(to: vc.view)
@@ -106,7 +106,7 @@ final class RegionViewController: UITableViewController, UISearchResultsUpdating
     override func viewDidLoad() {
         super.viewDidLoad()
         title = "Region"
-        tableView.backgroundColor = Theme.ink
+        tableView.backgroundColor = Theme.bg
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "cell")
         let search = UISearchController(searchResultsController: nil)
         search.searchResultsUpdater = self
@@ -180,7 +180,7 @@ final class ServicesPickerView: UIView, UICollectionViewDataSource, UICollection
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "p", for: indexPath) as! ProviderCell
         let p = providers[indexPath.item]
-        cell.configure(p, mine: Prefs.services.contains(p.providerId), accent: Theme.amber)
+        cell.configure(p, mine: Prefs.services.contains(p.providerId), accent: Theme.accent)
         return cell
     }
 

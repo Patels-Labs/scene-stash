@@ -8,6 +8,8 @@ final class ImageLoader {
     private let cache = NSCache<NSURL, UIImage>()
     private let tints = NSCache<NSURL, UIColor>()
     private let ciContext = CIContext(options: [.workingColorSpace: NSNull()])
+    let glowContext = CIContext()
+    let glowCache = NSCache<NSURL, UIImage>()
     private let session: URLSession = {
         let config = URLSessionConfiguration.default
         config.urlCache = URLCache(memoryCapacity: 30 << 20, diskCapacity: 400 << 20)
@@ -36,7 +38,8 @@ final class ImageLoader {
         ciContext.render(output, toBitmap: &px, rowBytes: 4, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBA8, colorSpace: nil)
         var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0
         UIColor(red: CGFloat(px[0]) / 255, green: CGFloat(px[1]) / 255, blue: CGFloat(px[2]) / 255, alpha: 1).getHue(&h, saturation: &s, brightness: &b, alpha: nil)
-        let tint = UIColor(hue: h, saturation: min(max(s * 1.4, 0.35), 0.85), brightness: max(b, 0.8), alpha: 1)
+        // Near-greyscale posters have no colour worth borrowing; keep the signature amber.
+        let tint = s < 0.18 ? Theme.accent : UIColor(hue: h, saturation: min(max(s * 1.5, 0.5), 0.85), brightness: max(b, 0.9), alpha: 1)
         tints.setObject(tint, forKey: url as NSURL)
         return tint
     }

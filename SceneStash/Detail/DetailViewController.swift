@@ -1,5 +1,6 @@
 import UIKit
 
+/// A title as an object: the poster card floats centre stage under its own light, with everything else below.
 final class DetailViewController: UIViewController, UICollectionViewDelegate {
     nonisolated private enum Section: Hashable { case hero, overview, providers, cast, seasons, episodes, more }
     nonisolated private enum Item: Hashable {
@@ -9,31 +10,27 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
 
     private let item: Title
     private var detail: TitleDetail?
-    private var accent = Theme.amber
-    private var background = Theme.ink
+    private var accent = Theme.accent
     private var selectedSeason: Int?
     private var seasonEpisodes: [Int: [Episode]] = [:]
     private var watched: Set<EpisodeKey> = []
     private var overviewExpanded = false
 
-    private let backdrop = UIImageView()
-    private let backdropFade = CAGradientLayer()
-    private var backdropHeight: NSLayoutConstraint!
-    private let baseBackdropHeight: CGFloat = 340
+    private let glow = GlowView()
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
 
     // Hero
     private let hero = UIStackView()
-    private let poster = UIImageView()
-    private let kicker = UILabel()
-    private let titleLabel = UILabel()
-    private let meta = UILabel()
-    private let tagline = UILabel()
+    private let poster = TiltCardView()
+    private let kicker = UILabel.make(Theme.label(), Theme.secondary)
+    private let titleLabel = UILabel.make(Theme.display(50, weight: .black), Theme.text, lines: 0)
+    private let meta = UILabel.make(Theme.label(), Theme.tertiary, lines: 0)
+    private let tagline = UILabel.make(Theme.text(.callout), Theme.secondary, lines: 0)
+    private let nextUp = UILabel.make(Theme.label(.caption1, weight: .bold), Theme.accent, lines: 0)
     private let ticket = TicketButton()
     private let ratingBox = UIStackView()
     private let reel = ReelRatingView()
-    private let nextUp = UILabel()
     private let trailerButton = UIButton(configuration: .glass())
 
     init(title: Title) {
@@ -48,44 +45,28 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         navigationItem.largeTitleDisplayMode = .never
         navigationItem.rightBarButtonItem = UIBarButtonItem(systemItem: .action, primaryAction: UIAction { [weak self] _ in self?.share() })
 
-        backdrop.contentMode = .scaleAspectFill
-        backdrop.clipsToBounds = true
-        backdrop.layer.addSublayer(backdropFade)
-        backdrop.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(backdrop)
-        backdropHeight = backdrop.heightAnchor.constraint(equalToConstant: baseBackdropHeight)
+        view.addSubview(glow)
+        glow.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            backdrop.topAnchor.constraint(equalTo: view.topAnchor),
-            backdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            backdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            backdropHeight,
+            glow.topAnchor.constraint(equalTo: view.topAnchor),
+            glow.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            glow.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            glow.heightAnchor.constraint(equalToConstant: 620),
         ])
-        backdrop.setImage(TMDB.imageURL(item.backdropPath ?? item.posterPath, .backdrop))
+        glow.show(TMDB.imageURL(item.posterPath ?? item.backdropPath, .poster))
 
         collectionView.backgroundColor = .clear
         collectionView.delegate = self
-        collectionView.contentInsetAdjustmentBehavior = .never
         view.addSubview(collectionView)
         collectionView.pin(to: view)
 
         buildHero()
         configureDataSource()
-        applyTheme()
+        applyAccent()
         refreshHero()
         applySnapshot()
         load()
-
         NotificationCenter.default.addObserver(self, selector: #selector(storeChanged), name: .NSManagedObjectContextObjectsDidChange, object: Store.shared.context)
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        collectionView.contentInset.bottom = view.safeAreaInsets.bottom + 12
-        collectionView.verticalScrollIndicatorInsets.bottom = view.safeAreaInsets.bottom
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        backdropFade.frame = backdrop.bounds
-        CATransaction.commit()
     }
 
     // MARK: Loading
@@ -95,19 +76,21 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             do {
                 let detail = try await TMDB.shared.detail(item.id, item.mediaType)
                 self.detail = detail
-                if item.backdropPath == nil { backdrop.setImage(TMDB.imageURL(detail.backdropPath, .backdrop)) }
+                if item.posterPath == nil {
+                    poster.setPoster(detail.posterPath, size: .posterLarge)
+                    glow.show(TMDB.imageURL(detail.posterPath, .poster))
+                }
                 if detail.mediaType == .tv {
                     watched = Store.shared.watched(show: detail.id)
-                    let seasons = detail.mainSeasons.map(\.seasonNumber)
                     let next = Progress.nextUp(seasons: seasonMap, watched: watched, aired: airedKey)
-                    selectedSeason = next?.season ?? seasons.first
+                    selectedSeason = next?.season ?? detail.mainSeasons.first?.seasonNumber
                 }
                 refreshHero()
                 applySnapshot()
                 if let season = selectedSeason { loadSeason(season) }
                 if let url = TMDB.imageURL(detail.posterPath, .poster), let tint = await ImageLoader.shared.tint(for: url) {
                     accent = tint
-                    UIView.animate(withDuration: 0.6) { self.applyTheme() }
+                    UIView.animate(withDuration: 0.6) { self.applyAccent() }
                     reconfigureAll()
                 }
             } catch {
@@ -132,65 +115,35 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         detail?.lastEpisodeToAir.map { EpisodeKey(season: $0.seasonNumber, episode: $0.episodeNumber) }
     }
 
-    // MARK: Theme
-
-    private func applyTheme() {
-        background = Theme.ink.blended(with: accent, amount: 0.14)
-        view.backgroundColor = background
-        backdropFade.colors = [background.withAlphaComponent(0.1).cgColor, background.withAlphaComponent(0.35).cgColor, background.cgColor]
-        backdropFade.locations = [0, 0.55, 1]
+    private func applyAccent() {
         ticket.setTint(accent)
         reel.setAccent(accent)
-        kicker.textColor = accent
         nextUp.textColor = accent
-        trailerButton.tintColor = accent
-        navigationController?.navigationBar.tintColor = Theme.paper
+        trailerButton.tintColor = .white
+        navigationController?.navigationBar.tintColor = Theme.text
     }
 
     // MARK: Hero
 
     private func buildHero() {
-        poster.contentMode = .scaleAspectFill
-        poster.clipsToBounds = true
-        poster.layer.cornerRadius = 10
-        poster.layer.cornerCurve = .continuous
-        poster.backgroundColor = Theme.inkRaised
-        poster.setImage(TMDB.imageURL(item.posterPath, .posterLarge))
+        poster.cornerRadius = 16
+        poster.maxAngle = 0.18
+        poster.setPoster(item.posterPath, size: .posterLarge)
         poster.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([poster.widthAnchor.constraint(equalToConstant: 104), poster.heightAnchor.constraint(equalToConstant: 156)])
+        NSLayoutConstraint.activate([poster.widthAnchor.constraint(equalToConstant: 196), poster.heightAnchor.constraint(equalToConstant: 294)])
 
-        kicker.font = Theme.mono(.caption1, weight: .bold)
-        titleLabel.font = Theme.serif(.largeTitle, weight: .heavy)
-        titleLabel.textColor = Theme.paper
-        titleLabel.numberOfLines = 0
+        [kicker, titleLabel, meta, tagline, nextUp].forEach { $0.textAlignment = .center }
         titleLabel.accessibilityTraits = .header
-        meta.font = Theme.mono(.caption1, weight: .medium)
-        meta.textColor = Theme.muted
-        meta.numberOfLines = 0
-        [kicker, titleLabel, meta, tagline, nextUp].forEach { $0.adjustsFontForContentSizeCategory = true }
-
-        let titles = UIStackView(arrangedSubviews: [kicker, titleLabel, meta])
-        titles.axis = .vertical
-        titles.spacing = 4
-        let top = UIStackView(arrangedSubviews: [poster, titles])
-        top.alignment = .bottom
-        top.spacing = 16
-
-        let italic = Theme.serif(.body, weight: .regular).fontDescriptor.withSymbolicTraits(.traitItalic)
-        tagline.font = italic.map { UIFont(descriptor: $0, size: 0) } ?? Theme.serif(.body)
-        tagline.textColor = Theme.paper.withAlphaComponent(0.7)
-        tagline.numberOfLines = 0
-
-        nextUp.font = Theme.mono(.footnote, weight: .bold)
+        titleLabel.adjustsFontSizeToFitWidth = true
+        titleLabel.minimumScaleFactor = 0.6
 
         ticket.onStash = { [weak self] in self?.stash() }
 
-        let ratingTitle = UILabel()
-        ratingTitle.text = "YOUR RATING"
-        ratingTitle.font = Theme.mono(.caption2, weight: .bold)
-        ratingTitle.textColor = Theme.muted
+        let ratingTitle = UILabel.make(Theme.label(), Theme.tertiary)
+        ratingTitle.setCaps("Your rating")
+        ratingTitle.textAlignment = .center
         ratingBox.axis = .vertical
-        ratingBox.spacing = 2
+        ratingBox.spacing = 4
         ratingBox.addArrangedSubview(ratingTitle)
         ratingBox.addArrangedSubview(reel)
         reel.onChange = { [weak self] value in
@@ -198,54 +151,72 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             Store.shared.setRating(value, for: detail?.title ?? item)
         }
 
-        trailerButton.configuration?.title = "Trailer"
+        trailerButton.configuration?.title = "Watch trailer"
         trailerButton.configuration?.image = UIImage(systemName: "play.fill")
-        trailerButton.configuration?.imagePadding = 6
+        trailerButton.configuration?.imagePadding = 8
+        trailerButton.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { a in
+            var a = a; a.font = Theme.text(.subheadline, weight: .semibold); return a
+        }
         trailerButton.addAction(UIAction { [weak self] _ in
             if let url = self?.detail?.trailerURL { UIApplication.shared.open(url) }
         }, for: .primaryActionTriggered)
-        let actions = UIStackView(arrangedSubviews: [trailerButton, UIView()])
 
-        [top, tagline, nextUp, ticket, ratingBox, actions].forEach(hero.addArrangedSubview)
+        let posterRow = UIStackView(arrangedSubviews: [poster])
+        posterRow.axis = .vertical
+        posterRow.alignment = .center
+        let titles = UIStackView(arrangedSubviews: [kicker, titleLabel, meta])
+        titles.axis = .vertical
+        titles.spacing = 6
+        let trailerRow = UIStackView(arrangedSubviews: [trailerButton])
+        trailerRow.axis = .vertical
+        trailerRow.alignment = .center
+
+        [posterRow, titles, tagline, nextUp, ticket, ratingBox, trailerRow].forEach(hero.addArrangedSubview)
         hero.axis = .vertical
-        hero.spacing = 14
-        hero.setCustomSpacing(20, after: top)
+        hero.spacing = 18
+        hero.setCustomSpacing(30, after: posterRow)
+        hero.setCustomSpacing(24, after: nextUp)
         hero.isLayoutMarginsRelativeArrangement = true
-        hero.directionalLayoutMargins = .init(top: 0, leading: 20, bottom: 8, trailing: 20)
+        hero.directionalLayoutMargins = .init(top: 0, leading: 22, bottom: 10, trailing: 22)
     }
 
     private func refreshHero() {
         let d = detail
-        kicker.text = [item.mediaType == .movie ? "FILM" : "SERIES", d?.year ?? item.year].compactMap { $0 }.joined(separator: " · ")
-        titleLabel.text = d?.name ?? item.name
+        var head = [item.mediaType == .movie ? "Film" : "Series"]
+        if let year = d?.year ?? item.year { head.append(year) }
+        if let runtime = d?.runtime, runtime > 0 { head.append(item.mediaType == .movie ? DateText.runtime(runtime) : "\(runtime) min episodes") }
+        kicker.setCaps(head.joined(separator: " · "))
+        titleLabel.setDisplay((d?.name ?? item.name).uppercased(), lineHeight: 0.84)
+
         var bits: [String] = []
-        if let runtime = d?.runtime, runtime > 0 { bits.append(item.mediaType == .movie ? DateText.runtime(runtime) : "\(runtime)m eps") }
+        if let genres = d?.genres.prefix(3).map(\.name), !genres.isEmpty { bits.append(genres.joined(separator: " / ")) }
         if let seasons = d?.mainSeasons.count, item.mediaType == .tv, seasons > 0 { bits.append("\(seasons) season\(seasons == 1 ? "" : "s")") }
-        if let genres = d?.genres.prefix(2).map(\.name), !genres.isEmpty { bits.append(genres.joined(separator: ", ")) }
-        if let vote = d?.voteAverage ?? item.voteAverage, vote > 0 { bits.append("★ " + vote.formatted(.number.precision(.fractionLength(1)))) }
-        meta.text = bits.joined(separator: "  ·  ")
-        tagline.text = d?.tagline
+        if let vote = d?.voteAverage ?? item.voteAverage, vote > 0 { bits.append("TMDB " + vote.formatted(.number.precision(.fractionLength(1)))) }
+        meta.setCaps(bits.joined(separator: "  ·  "), kern: 1)
+        tagline.text = d?.tagline.map { "“\($0)”" }
         tagline.isHidden = d?.tagline == nil
 
         let tracked = Store.shared.tracked(item.id, item.mediaType)
         ticket.configure(status: tracked?.status, menu: statusMenu())
         ratingBox.isHidden = tracked == nil || tracked?.status == .watchlist
-        if !ratingBox.isHidden, reel.value != Int(tracked?.rating ?? 0), !reel.isInteracting { reel.set(Int(tracked?.rating ?? 0), animated: false) }
-        trailerButton.isHidden = d?.trailerURL == nil
+        let rating = Int(tracked?.rating ?? 0)
+        if !ratingBox.isHidden, reel.value != rating, !reel.isInteracting { reel.set(rating, animated: false) }
+        poster.foil = rating >= 9
+        trailerButton.superview?.isHidden = d?.trailerURL == nil
 
         if item.mediaType == .tv, let d {
             let remaining = Progress.remaining(seasons: seasonMap, watched: watched, aired: airedKey)
             if let next = Progress.nextUp(seasons: seasonMap, watched: watched, aired: airedKey) {
-                nextUp.text = watched.isEmpty ? "START WITH \(next.label)" : "UP NEXT  \(next.label)  ·  \(remaining) LEFT"
+                nextUp.setCaps(watched.isEmpty ? "Start with \(next.label)" : "Up next \(next.label) · \(remaining) to go", kern: 1.2)
             } else if let upcoming = d.nextEpisodeToAir, let date = upcoming.airDate.flatMap(DateText.pretty) {
-                nextUp.text = "CAUGHT UP · NEXT EPISODE \(date.uppercased())"
+                nextUp.setCaps("Caught up · next episode \(date)", kern: 1.2)
             } else {
-                nextUp.text = watched.isEmpty ? nil : "ALL CAUGHT UP"
+                nextUp.setCaps(watched.isEmpty ? nil : "All caught up", kern: 1.2)
             }
         } else {
-            nextUp.text = nil
+            nextUp.setCaps(nil)
         }
-        nextUp.isHidden = nextUp.text == nil
+        nextUp.isHidden = nextUp.attributedText == nil
     }
 
     private func statusMenu() -> UIMenu {
@@ -309,8 +280,8 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             Store.shared.setWatched([key], watched: true, show: detail.title, runtime: runtime)
             return
         }
-        let sheet = UIAlertController(title: "Catch up the season?", message: "You haven't punched \(earlier.count) earlier episode\(earlier.count == 1 ? "" : "s") in season \(episode.seasonNumber).", preferredStyle: .actionSheet)
-        sheet.addAction(UIAlertAction(title: "Punch all \(earlier.count + 1)", style: .default) { _ in
+        let sheet = UIAlertController(title: "Catch up the season?", message: "You haven't marked \(earlier.count) earlier episode\(earlier.count == 1 ? "" : "s") in season \(episode.seasonNumber).", preferredStyle: .actionSheet)
+        sheet.addAction(UIAlertAction(title: "Mark all \(earlier.count + 1) watched", style: .default) { _ in
             Store.shared.setWatched(earlier + [key], watched: true, show: detail.title, runtime: runtime)
         })
         sheet.addAction(UIAlertAction(title: "Just this one", style: .default) { _ in
@@ -336,7 +307,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
     @objc private func storeChanged() {
         let before = watched
         if item.mediaType == .tv { watched = Store.shared.watched(show: item.id) }
-        // Animate only the episodes that just got punched.
+        // Animate only the episodes that just got marked.
         for key in watched.subtracting(before) {
             if let episode = seasonEpisodes[key.season]?.first(where: { $0.episodeNumber == key.episode }) {
                 episodeCell(episode)?.punch.set(true, animated: true)
@@ -369,18 +340,18 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             switch section {
             case .hero:
                 s = list(spacing: 0)
-                s.contentInsets = .init(top: self.baseBackdropHeight - 110, leading: 0, bottom: 20, trailing: 0)
+                s.contentInsets = .init(top: 20, leading: 0, bottom: 30, trailing: 0)
                 return s
             case .overview: s = list(spacing: 0)
-            case .providers: s = row(width: .absolute(72), height: 96, spacing: 10)
-            case .cast: s = row(width: .absolute(92), height: 150, spacing: 10)
-            case .seasons: s = row(width: .estimated(110), height: 34, spacing: 8)
-            case .episodes: s = list(spacing: 16)
-            case .more: s = row(width: .absolute(110), height: 165, spacing: 12)
+            case .providers: s = row(width: .absolute(76), height: 102, spacing: 8)
+            case .cast: s = row(width: .absolute(90), height: 148, spacing: 8)
+            case .seasons: s = row(width: .estimated(80), height: 36, spacing: 8)
+            case .episodes: s = list(spacing: 18)
+            case .more: s = row(width: .absolute(112), height: 168, spacing: 10)
             }
-            s.contentInsets = .init(top: 10, leading: 20, bottom: 26, trailing: 20)
+            s.contentInsets = .init(top: 12, leading: 22, bottom: 38, trailing: 22)
+            if section == .seasons { s.contentInsets.bottom = 8 }
             if section != .overview && section != .seasons { s.boundarySupplementaryItems = [Layouts.headerItem()] }
-            if section == .overview { s.contentInsets.bottom = 26 }
             return s
         }
     }
@@ -403,7 +374,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             let count = seasonMap[n] ?? 0
             let done = watched.filter { $0.season == n }.count
             cell.accent = accent
-            cell.configure("S\(n)", selected: n == selectedSeason, progress: done > 0 ? "\(done)/\(count)" : nil)
+            cell.configure("Season \(n)", selected: n == selectedSeason, progress: done > 0 ? "\(done)/\(count)" : nil)
         }
         let episodeReg = UICollectionView.CellRegistration<EpisodeCell, Item> { [unowned self] cell, _, item in
             guard case .episode(let e) = item else { return }
@@ -416,14 +387,14 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         }
         let headerReg = UICollectionView.SupplementaryRegistration<SectionHeader>(elementKind: SectionHeader.kind) { [unowned self] header, _, indexPath in
             switch dataSource.sectionIdentifier(for: indexPath.section) {
-            case .providers: header.configure("Where to watch", caption: "Streaming in \(Prefs.region) · via JustWatch")
+            case .providers: header.configure("Where to watch", caption: "Streaming in \(Prefs.region) · JustWatch")
             case .cast: header.configure("Cast")
             case .episodes:
                 let all = (seasonEpisodes[selectedSeason ?? 0] ?? []).filter { DateText.isPast($0.airDate) }
                     .allSatisfy { watched.contains(EpisodeKey(season: $0.seasonNumber, episode: $0.episodeNumber)) }
-                header.configure("Season \(selectedSeason ?? 1)", caption: "Episodes", accessory: all ? "Unpunch all" : "Punch all") { [weak self] in self?.punchSeason() }
+                header.configure("Episodes", caption: "Season \(selectedSeason ?? 1)", accessory: all ? "Unmark all" : "Mark all") { [weak self] in self?.punchSeason() }
                 header.accessory.tintColor = accent
-            case .more: header.configure("More like this", caption: "If you liked it")
+            case .more: header.configure("More like this")
             default: header.configure("")
             }
         }
@@ -506,26 +477,12 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         return titleMenu(t)
     }
 
-    // Stretchy backdrop: grows when pulled down, drifts up at half speed when scrolled.
+    // The light drifts up slower than the content; pulling down lifts the card toward you.
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        let y = scrollView.contentOffset.y
-        if y < 0 {
-            backdropHeight.constant = baseBackdropHeight - y
-            backdrop.transform = .identity
-        } else {
-            backdropHeight.constant = baseBackdropHeight
-            backdrop.transform = CGAffineTransform(translationX: 0, y: -y * 0.5)
-        }
-        navigationItem.title = y > baseBackdropHeight - 40 ? (detail?.name ?? item.name) : nil
-    }
-}
-
-extension UIColor {
-    func blended(with other: UIColor, amount: CGFloat) -> UIColor {
-        var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
-        var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
-        getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
-        other.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
-        return UIColor(red: r1 + (r2 - r1) * amount, green: g1 + (g2 - g1) * amount, blue: b1 + (b2 - b1) * amount, alpha: 1)
+        let y = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
+        glow.transform = CGAffineTransform(translationX: 0, y: -max(y, 0) * 0.4)
+        let pull = max(-y, 0)
+        poster.transform = CGAffineTransform(scaleX: 1 + pull / 600, y: 1 + pull / 600)
+        navigationItem.title = y > 420 ? (detail?.name ?? item.name) : nil
     }
 }

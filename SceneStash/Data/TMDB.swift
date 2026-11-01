@@ -164,18 +164,19 @@ nonisolated struct Reel: Hashable {
     let name: String
     let path: String
     var query: [String: String] = [:]
+    var caption: String? = nil
 }
 
 extension Reel {
+    static let featured = Reel(name: "Trending this week", path: "trending/all/week")
     static let discover: [Reel] = [
-        Reel(name: "Trending this week", path: "trending/all/week"),
-        Reel(name: "Now in cinemas", path: "movie/now_playing"),
-        Reel(name: "Bingeable", path: "tv/top_rated"),
-        Reel(name: "Mind benders", path: "discover/movie", query: ["with_genres": "878|9648", "sort_by": "vote_count.desc"]),
-        Reel(name: "Lights off", path: "discover/movie", query: ["with_genres": "27", "sort_by": "popularity.desc"]),
-        Reel(name: "Animated worlds", path: "discover/tv", query: ["with_genres": "16", "sort_by": "popularity.desc"]),
-        Reel(name: "Laugh track", path: "discover/tv", query: ["with_genres": "35", "sort_by": "popularity.desc"]),
-        Reel(name: "Crime nights", path: "discover/tv", query: ["with_genres": "80", "sort_by": "popularity.desc"]),
+        Reel(name: "Now in cinemas", path: "movie/now_playing", caption: "On the big screen"),
+        Reel(name: "Bingeable", path: "tv/top_rated", caption: "Clear your weekend"),
+        Reel(name: "Mind benders", path: "discover/movie", query: ["with_genres": "878|9648", "sort_by": "vote_count.desc"], caption: "Sci-fi & mystery"),
+        Reel(name: "Lights off", path: "discover/movie", query: ["with_genres": "27", "sort_by": "popularity.desc"], caption: "Horror"),
+        Reel(name: "Animated worlds", path: "discover/tv", query: ["with_genres": "16", "sort_by": "popularity.desc"], caption: "Animation"),
+        Reel(name: "Laugh track", path: "discover/tv", query: ["with_genres": "35", "sort_by": "popularity.desc"], caption: "Comedy"),
+        Reel(name: "Crime nights", path: "discover/tv", query: ["with_genres": "80", "sort_by": "popularity.desc"], caption: "Crime"),
     ]
 }
 

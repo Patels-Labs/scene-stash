@@ -8,7 +8,7 @@ final class TicketButton: UIButton {
     var onStash: (() -> Void)?
     private let shape = CAShapeLayer()
     private let edge = CAShapeLayer()
-    private let perforation: CAShapeLayer = TicketShape.perforation(x: 0, in: .zero)
+    private let perforation = TicketShape.perforation()
     private let mainLabel = UILabel()
     private let stubIcon = UIImageView()
     private var stubWidth: CGFloat { 64 }
@@ -18,10 +18,7 @@ final class TicketButton: UIButton {
         layer.addSublayer(edge)
         layer.addSublayer(shape)
         layer.addSublayer(perforation)
-        edge.fillColor = Theme.amberDeep.cgColor
-        perforation.strokeColor = Theme.amberDeep.cgColor
-
-        mainLabel.font = Theme.mono(.subheadline, weight: .bold)
+        mainLabel.font = Theme.label(.footnote, weight: .bold)
         mainLabel.adjustsFontForContentSizeCategory = true
         mainLabel.textAlignment = .center
         mainLabel.adjustsFontSizeToFitWidth = true
@@ -31,7 +28,7 @@ final class TicketButton: UIButton {
         [mainLabel, stubIcon].forEach { $0.isUserInteractionEnabled = false; addSubview($0) }
         heightAnchor.constraint(greaterThanOrEqualToConstant: 58).isActive = true
         addAction(UIAction { [weak self] _ in self?.onStash?() }, for: .primaryActionTriggered)
-        setTint(Theme.amber)
+        setTint(Theme.accent)
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -42,19 +39,19 @@ final class TicketButton: UIButton {
         let deep = UIColor(hue: h, saturation: min(s + 0.15, 1), brightness: b * 0.7, alpha: 1)
         edge.fillColor = deep.cgColor
         perforation.strokeColor = deep.cgColor
-        mainLabel.textColor = Theme.ink
-        stubIcon.tintColor = Theme.ink
+        mainLabel.textColor = .black
+        stubIcon.tintColor = .black
     }
 
     /// nil = not in the stash yet.
     func configure(status: TrackStatus?, menu: UIMenu?) {
         if let status {
-            mainLabel.text = "IN STASH · \(status.label.uppercased())"
+            mainLabel.setCaps("In stash · \(status.label)", kern: 1.2)
             stubIcon.image = UIImage(systemName: status.symbol)
             accessibilityLabel = "In your stash: \(status.label)"
             accessibilityHint = "Change status"
         } else {
-            mainLabel.text = "STASH IT"
+            mainLabel.setCaps("Stash it", kern: 2)
             stubIcon.image = UIImage(systemName: "plus")
             accessibilityLabel = "Stash it"
             accessibilityHint = "Adds this to your watchlist"
@@ -143,7 +140,7 @@ final class ReelRatingView: UIView, UIScrollViewDelegate {
     private let frameWidth: CGFloat = 54
     private let selection = UISelectionFeedbackGenerator()
     private let sprockets = CAShapeLayer()
-    private var accent = Theme.amber
+    private var accent = Theme.accent
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -158,9 +155,9 @@ final class ReelRatingView: UIView, UIScrollViewDelegate {
             let label = UILabel()
             label.text = i == 0 ? "–" : "\(i)"
             label.textAlignment = .center
-            label.font = Theme.serif(.title2)
-            label.textColor = Theme.paper
-            label.layer.cornerRadius = 6
+            label.font = Theme.display(30)
+            label.textColor = Theme.text
+            label.layer.cornerRadius = 8
             label.layer.cornerCurve = .continuous
             label.clipsToBounds = true
             scroll.addSubview(label)
@@ -226,7 +223,7 @@ final class ReelRatingView: UIView, UIScrollViewDelegate {
             label.transform = CGAffineTransform(scaleX: scale, y: scale)
             let selected = i == centeredIndex
             label.backgroundColor = selected ? accent : UIColor(white: 1, alpha: 0.06)
-            label.textColor = selected ? Theme.ink : Theme.paper.withAlphaComponent(max(1 - distance * 0.25, 0.3))
+            label.textColor = selected ? .black : Theme.text.withAlphaComponent(max(1 - distance * 0.25, 0.3))
         }
     }
 
@@ -265,7 +262,7 @@ final class PunchButton: UIControl {
     private let ring = CAShapeLayer()
     private let disc = CAShapeLayer()
     private let check = CAShapeLayer()
-    var accent = Theme.amber { didSet { disc.fillColor = accent.cgColor } }
+    var accent = Theme.accent { didSet { disc.fillColor = accent.cgColor } }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -274,7 +271,7 @@ final class PunchButton: UIControl {
         ring.lineWidth = 2
         ring.lineDashPattern = [3, 3]
         disc.fillColor = accent.cgColor
-        check.strokeColor = Theme.ink.cgColor
+        check.strokeColor = UIColor.black.cgColor
         check.fillColor = nil
         check.lineWidth = 2.5
         check.lineCap = .round
@@ -327,17 +324,19 @@ final class PunchButton: UIControl {
         burst()
     }
 
-    /// A few paper chips spray out of the punch.
-    private func burst() {
+    private func burst() { Self.chips(in: layer, at: CGPoint(x: bounds.midX, y: bounds.midY), color: accent) }
+
+    /// A few paper chips spray out from a point, like a ticket punch.
+    static func chips(in host: CALayer, at point: CGPoint, color: UIColor) {
         let emitter = CAEmitterLayer()
-        emitter.emitterPosition = CGPoint(x: bounds.midX, y: bounds.midY)
+        emitter.emitterPosition = point
         emitter.emitterShape = .circle
         emitter.emitterSize = CGSize(width: 20, height: 20)
         let chip = CAEmitterCell()
         chip.contents = UIGraphicsImageRenderer(size: CGSize(width: 5, height: 3)).image { _ in
             UIColor.white.setFill(); UIRectFill(CGRect(x: 0, y: 0, width: 5, height: 3))
         }.cgImage
-        chip.color = accent.cgColor
+        chip.color = color.cgColor
         chip.birthRate = 160
         chip.lifetime = 0.55
         chip.velocity = 90
@@ -349,90 +348,8 @@ final class PunchButton: UIControl {
         chip.alphaSpeed = -1.8
         chip.scaleRange = 0.4
         emitter.emitterCells = [chip]
-        layer.addSublayer(emitter)
+        host.addSublayer(emitter)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { emitter.birthRate = 0 }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { emitter.removeFromSuperlayer() }
-    }
-}
-
-// MARK: - Marquee
-
-/// Cinema-marquee frame with chasing bulbs around its edge.
-final class MarqueeView: UIView {
-    let content = UIStackView()
-    private let dim = CAShapeLayer()
-    private let lit = CAShapeLayer()
-    private let panel = CAShapeLayer()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        panel.fillColor = Theme.inkRaised.cgColor
-        panel.strokeColor = Theme.amberDeep.withAlphaComponent(0.6).cgColor
-        panel.lineWidth = 1
-        for (bulbs, color, gap) in [(dim, Theme.amber.withAlphaComponent(0.18), 14.0), (lit, Theme.amber, 42.0)] {
-            bulbs.fillColor = nil
-            bulbs.strokeColor = color.cgColor
-            bulbs.lineWidth = 5
-            bulbs.lineCap = .round
-            bulbs.lineDashPattern = [0, NSNumber(value: gap)]
-        }
-        lit.shadowColor = Theme.amber.cgColor
-        lit.shadowRadius = 4
-        lit.shadowOpacity = 0.9
-        lit.shadowOffset = .zero
-        [panel, dim, lit].forEach(layer.addSublayer)
-
-        content.axis = .horizontal
-        content.distribution = .fillEqually
-        content.spacing = 8
-        addSubview(content)
-        content.pin(to: self, inset: 22)
-        NotificationCenter.default.addObserver(self, selector: #selector(chase), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        panel.path = UIBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2), cornerRadius: 18).cgPath
-        let track = UIBezierPath(roundedRect: bounds.insetBy(dx: 9, dy: 9), cornerRadius: 12).cgPath
-        dim.path = track
-        lit.path = track
-        chase()
-    }
-
-    override func didMoveToWindow() { super.didMoveToWindow(); chase() }
-
-    @objc private func chase() {
-        lit.removeAllAnimations()
-        guard window != nil, !UIAccessibility.isReduceMotionEnabled else { return }
-        let run = CABasicAnimation(keyPath: "lineDashPhase")
-        run.fromValue = 0
-        run.toValue = -42
-        run.duration = 0.9
-        run.repeatCount = .infinity
-        lit.add(run, forKey: "chase")
-    }
-
-    /// A stat column: big serif value over a mono caption.
-    static func stat(_ value: String, _ caption: String) -> UIView {
-        let v = UILabel()
-        v.text = value
-        v.font = Theme.serif(.title1)
-        v.textColor = Theme.paper
-        v.adjustsFontSizeToFitWidth = true
-        v.minimumScaleFactor = 0.5
-        v.textAlignment = .center
-        let c = UILabel()
-        c.text = caption.uppercased()
-        c.font = Theme.mono(.caption2)
-        c.textColor = Theme.amber
-        c.textAlignment = .center
-        c.adjustsFontSizeToFitWidth = true
-        let stack = UIStackView(arrangedSubviews: [v, c])
-        stack.axis = .vertical
-        stack.spacing = 2
-        stack.isAccessibilityElement = true
-        stack.accessibilityLabel = "\(value) \(caption)"
-        return stack
     }
 }
