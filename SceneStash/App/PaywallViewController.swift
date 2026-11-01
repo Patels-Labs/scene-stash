@@ -6,9 +6,8 @@ final class PaywallViewController: UIViewController {
     private let ticket = TiltCardView()
     private let note = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 0)
     private let primary = PillButton("Start free trial")
-    private let secondary = PillButton("Buy now", inverted: true)
     private let spinner = UIActivityIndicatorView(style: .medium)
-    private var busy = false { didSet { [primary, secondary].forEach { $0.isEnabled = !busy }; busy ? spinner.startAnimating() : spinner.stopAnimating() } }
+    private var busy = false { didSet { primary.isEnabled = !busy; busy ? spinner.startAnimating() : spinner.stopAnimating() } }
 
     private static let bill: [(String, String)] = [
         ("Your year, on film", "A year-end reel of everything you watched, ready to share."),
@@ -37,12 +36,12 @@ final class PaywallViewController: UIViewController {
         content.isLayoutMarginsRelativeArrangement = true
         content.directionalLayoutMargins = .init(top: 64, leading: 20, bottom: 260, trailing: 20)
 
-        ticket.imageView.image = Self.ticketImage(price: "$1.99")
+        ticket.imageView.image = Self.ticketImage(price: Pass.shared.price)
         ticket.cornerRadius = 16
         ticket.maxAngle = 0.2
         ticket.foil = true
         ticket.isAccessibilityElement = true
-        ticket.accessibilityLabel = "All-Access Pass. Admit one, valid forever."
+        ticket.accessibilityLabel = "All-Access Pass. Admit one, valid all year."
         let ticketRow = UIStackView(arrangedSubviews: [ticket])
         ticketRow.axis = .vertical
         ticketRow.alignment = .center
@@ -51,14 +50,14 @@ final class PaywallViewController: UIViewController {
 
         let headline = UILabel.make(Theme.display(62, weight: .black), Theme.text, lines: 0)
         let text = NSMutableAttributedString(string: "ONE TICKET.\n", attributes: [.foregroundColor: Theme.text])
-        text.append(NSAttributedString(string: "EVERY SHOW, FOREVER.", attributes: [.foregroundColor: Theme.tertiary]))
+        text.append(NSAttributedString(string: "EVERY SHOW, ALL YEAR.", attributes: [.foregroundColor: Theme.tertiary]))
         let style = NSMutableParagraphStyle()
         style.lineHeightMultiple = 0.86
         text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
         headline.attributedText = text
         headline.accessibilityTraits = .header
         let body = UILabel.make(Theme.text(.subheadline), Theme.secondary, lines: 0)
-        body.text = "Tracking stays free. The pass adds the extras, for one small price, once."
+        body.text = "Tracking stays free. The pass adds the extras, for one small price a year."
         let caption = UILabel.make(Theme.label(.caption2, weight: .bold), Theme.accent)
         caption.setCaps("On the bill")
 
@@ -145,15 +144,19 @@ final class PaywallViewController: UIViewController {
         footer.onLayout = { fade.frame = $0 }
         note.textAlignment = .center
         primary.addAction(UIAction { [weak self] _ in self?.tapPrimary() }, for: .primaryActionTriggered)
-        secondary.addAction(UIAction { [weak self] _ in self?.buy(Pass.shared.lifetime) }, for: .primaryActionTriggered)
-        let terms = UIButton(type: .system)
-        terms.setTitle("TERMS OF USE", for: .normal)
-        terms.titleLabel?.font = Theme.label(.caption2, weight: .bold)
-        terms.tintColor = Theme.tertiary
-        terms.addAction(UIAction { _ in
-            UIApplication.shared.open(URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
-        }, for: .primaryActionTriggered)
-        let stack = UIStackView(arrangedSubviews: [note, primary, secondary, terms])
+        let links = UIStackView(arrangedSubviews: [("TERMS OF USE", Pass.termsURL), ("PRIVACY POLICY", Pass.privacyURL)].map { title, url in
+            let b = UIButton(type: .system)
+            b.setTitle(title, for: .normal)
+            b.titleLabel?.font = Theme.label(.caption2, weight: .bold)
+            b.tintColor = Theme.tertiary
+            b.addAction(UIAction { _ in UIApplication.shared.open(url) }, for: .primaryActionTriggered)
+            return b
+        })
+        links.spacing = 24
+        let linkRow = UIStackView(arrangedSubviews: [links])
+        linkRow.axis = .vertical
+        linkRow.alignment = .center
+        let stack = UIStackView(arrangedSubviews: [note, primary, linkRow])
         stack.axis = .vertical
         stack.spacing = 10
         stack.setCustomSpacing(14, after: note)
@@ -174,55 +177,42 @@ final class PaywallViewController: UIViewController {
         ])
     }
 
-    /// What the buttons say depends on where you are: never tried, mid-trial, trial over, or owned.
+    /// What the button says depends on where you are: new (trial on offer), lapsed, mid-trial, or subscribed.
     @objc private func update() {
         let pass = Pass.shared
-        let price = pass.lifetime?.displayPrice ?? "$1.99"
-        ticket.imageView.image = Self.ticketImage(price: price)
-        primary.isHidden = false
-        secondary.isHidden = false
-        if pass.owned {
-            note.text = "You're in. Every extra, for good. Thank you."
+        ticket.imageView.image = Self.ticketImage(price: pass.price)
+        let ends = pass.periodEnds?.formatted(.dateTime.day().month(.wide).year())
+        if pass.subscribed {
+            if pass.inTrial, let ends {
+                note.text = pass.willRenew ? "Your free trial runs until \(ends), then it's \(pass.price) a year. Cancel anytime in Settings." : "Your free trial ends \(ends) and won't renew."
+            } else if let ends {
+                note.text = pass.willRenew ? "You're in. Renews \(ends) for \(pass.price). Thank you." : "You're in until \(ends). It won't renew."
+            } else {
+                note.text = "You're in. Thank you."
+            }
             primary.configuration?.title = "Done"
-            secondary.isHidden = true
-        } else if pass.trialActive, let ends = pass.trialEnds {
-            note.text = "Your trial runs until \(ends.formatted(.dateTime.weekday(.wide).day().month())). Keep everything for \(price), once."
-            primary.configuration?.title = "Keep it · \(price)"
-            secondary.isHidden = true
-        } else if pass.trialStarted != nil || (pass.trial == nil && pass.lifetime != nil) {
-            note.text = "\(price) once. No subscription."
-            primary.configuration?.title = "Buy now · \(price)"
-            secondary.isHidden = true
+        } else if let trial = pass.trialLength {
+            note.text = "Free for \(trial), then \(pass.price) a year. Renews automatically; cancel anytime in Settings, at least a day before the trial ends."
+            primary.configuration?.title = "Start \(trial) free"
         } else {
-            note.text = "Free for 7 days, then \(price) once. No subscription."
-            primary.configuration?.title = "Start free trial"
-            secondary.configuration?.title = "Buy now · \(price)"
+            note.text = "\(pass.price) a year. Renews automatically; cancel anytime in Settings."
+            primary.configuration?.title = "Subscribe · \(pass.price) a year"
         }
     }
 
     private func tapPrimary() {
-        let pass = Pass.shared
-        if pass.owned { dismiss(animated: true); return }
-        let canTrial = pass.trialStarted == nil && pass.trial != nil
-        buy(canTrial ? pass.trial : pass.lifetime)
-    }
-
-    private func buy(_ product: Product?) {
-        guard let product else {
-            showMessage("The store isn't available right now. Try again in a moment.")
-            return
-        }
+        if Pass.shared.subscribed { dismiss(animated: true); return }
         busy = true
         Task {
             defer { busy = false }
             do {
-                switch try await Pass.shared.buy(product) {
+                switch try await Pass.shared.subscribe() {
                 case .unlocked: celebrate()
                 case .pending: showMessage("Your purchase is waiting for approval. It'll unlock as soon as it's through.")
                 case .cancelled: break
                 }
             } catch {
-                showMessage(error.localizedDescription)
+                showMessage(Pass.shared.yearly == nil ? "The store isn't available right now. Try again in a moment." : error.localizedDescription)
             }
         }
     }
@@ -232,7 +222,7 @@ final class PaywallViewController: UIViewController {
         Task {
             await Pass.shared.restore()
             busy = false
-            if Pass.shared.isUnlocked { celebrate() } else { showMessage("No pass found for this Apple Account.") }
+            if Pass.shared.isUnlocked { celebrate() } else { showMessage("No active pass found for this Apple Account.") }
         }
     }
 
@@ -272,11 +262,11 @@ final class PaywallViewController: UIViewController {
             draw("NO. 000417", small, at: CGPoint(x: 330, y: 32), kern: 3)
             draw("ADMIT ONE", small, at: CGPoint(x: 36, y: 168), kern: 3, alpha: 0.65)
             draw("ALL-ACCESS", .systemFont(ofSize: 104, weight: .black, width: .compressed), at: CGPoint(x: 32, y: 182))
-            draw("VALID FOREVER · EVERY SCREEN", small, at: CGPoint(x: 36, y: 300), kern: 3)
+            draw("VALID ALL YEAR · EVERY SCREEN", small, at: CGPoint(x: 36, y: 300), kern: 3)
             let stubW = size.width - stubX
-            draw("ONCE", small, at: CGPoint(x: stubX, y: 110), kern: 3, centeredIn: stubW)
+            draw("PER YEAR", small, at: CGPoint(x: stubX, y: 110), kern: 3, centeredIn: stubW)
             draw(price, .systemFont(ofSize: 72, weight: .black, width: .compressed), at: CGPoint(x: stubX, y: 136), centeredIn: stubW)
-            draw("LIFETIME", small, at: CGPoint(x: stubX, y: 226), kern: 3, centeredIn: stubW)
+            draw("ALL ACCESS", small, at: CGPoint(x: stubX, y: 226), kern: 3, centeredIn: stubW)
         }
     }
 }
