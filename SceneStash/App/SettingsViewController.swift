@@ -1,3 +1,4 @@
+import StoreKit
 import CloudKit
 import UIKit
 
@@ -48,14 +49,15 @@ final class SettingsViewController: UITableViewController {
         switch sections[indexPath.section].1[indexPath.row] {
         case .pass:
             let pass = Pass.shared
-            config.text = pass.owned ? "All-Access Pass" : "Get the All-Access Pass"
-            if pass.owned {
-                config.secondaryText = "Lifetime"
-            } else if pass.trialActive, let ends = pass.trialEnds {
+            config.text = pass.subscribed ? "All-Access Pass" : "Get the All-Access Pass"
+            if pass.subscribed, let ends = pass.periodEnds {
                 let days = max(Calendar.current.dateComponents([.day], from: .now, to: ends).day ?? 0, 0) + 1
-                config.secondaryText = "Trial · \(days) day\(days == 1 ? "" : "s") left"
+                let date = ends.formatted(.dateTime.day().month(.abbreviated))
+                config.secondaryText = pass.inTrial ? "Trial · \(days) day\(days == 1 ? "" : "s") left" : pass.willRenew ? "Renews \(date)" : "Ends \(date)"
+            } else if pass.subscribed {
+                config.secondaryText = "Active"
             } else {
-                config.secondaryText = pass.lifetime?.displayPrice ?? "$1.99"
+                config.secondaryText = pass.trialLength.map { "Try \($0) free" } ?? "\(pass.price)/yr"
             }
             config.image = UIImage(systemName: "ticket.fill")
             cell.accessoryType = .disclosureIndicator
@@ -128,7 +130,12 @@ final class SettingsViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         switch sections[indexPath.section].1[indexPath.row] {
-        case .pass: present(PaywallViewController(), animated: true)
+        case .pass:
+            if Pass.shared.subscribed, let scene = view.window?.windowScene {
+                Task { try? await AppStore.showManageSubscriptions(in: scene); await Pass.shared.refresh() }
+            } else {
+                present(PaywallViewController(), animated: true)
+            }
         case .icon: withPass { navigationController?.pushViewController(IconPickerViewController(), animated: true) }
         case .region: navigationController?.pushViewController(RegionViewController(), animated: true)
         case .services:
