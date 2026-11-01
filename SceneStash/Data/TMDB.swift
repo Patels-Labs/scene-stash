@@ -200,7 +200,6 @@ final class TMDB {
     private let session: URLSession = {
         let config = URLSessionConfiguration.default
         config.urlCache = URLCache(memoryCapacity: 20 << 20, diskCapacity: 100 << 20)
-        config.requestCachePolicy = .returnCacheDataElseLoad
         return URLSession(configuration: config)
     }()
     private let decoder: JSONDecoder = {

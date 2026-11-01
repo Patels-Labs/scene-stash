@@ -39,7 +39,6 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
     init(title: Title) {
         item = title
         super.init(nibName: nil, bundle: nil)
-        hidesBottomBarWhenPushed = false
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -81,6 +80,8 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        collectionView.contentInset.bottom = view.safeAreaInsets.bottom + 12
+        collectionView.verticalScrollIndicatorInsets.bottom = view.safeAreaInsets.bottom
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         backdropFade.frame = backdrop.bounds
