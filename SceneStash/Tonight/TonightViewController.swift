@@ -6,7 +6,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
     nonisolated struct Film: Hashable { let title: Title; let position: Int; let runtime: Int }
     nonisolated struct Upcoming: Hashable { let title: Title; let date: Date; let label: String }
     nonisolated enum Slot: Hashable {
-        case episode(UpNext), film(Film), pick(Film), free
+        case episode(UpNext), film(Film), pick(Film), free, intermission(Int)
 
         var minutes: Int {
             switch self {
@@ -14,13 +14,14 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             case .film(let f): max(f.runtime - f.position / 60, 1)
             case .pick(let f): f.runtime
             case .free: 0
+            case .intermission(let m): m
             }
         }
         var title: Title? {
             switch self {
             case .episode(let u): u.show
             case .film(let f), .pick(let f): f.title
-            case .free: nil
+            case .free, .intermission: nil
             }
         }
     }
@@ -37,6 +38,9 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
     private var trending: [Title] = []
     private var refreshTask: Task<Void, Never>?
     private var clock: Timer?
+    /// Today's marathon, when there is one: its name and when its doors open.
+    private var marathon: (name: String, doors: Date)?
+    private var doors: Date { marathon?.doors ?? Self.doors() }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -128,6 +132,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             }
             upNext = next
             programme = buildProgramme()
+            Alerts.reschedule(Array(details.values))
 
             var soon: [Upcoming] = []
             for item in tracked {
@@ -147,11 +152,34 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
     /// The next episode of your first show leads, then any film you're partway through, then the rest.
     /// If there's room before lights up, a released film from the watchlist fills it.
     private func buildProgramme() -> [Slot] {
+        // A marathon day takes over the programme: its pieces in order, intermissions between.
+        if let (m, _, planned) = Store.shared.marathonToday(), let first = planned.first {
+            marathon = (m.name ?? "Marathon", first.start)
+            var slots: [Slot] = []
+            for (i, p) in planned.enumerated() {
+                if p.piece.isEpisode, let s = p.piece.season, let e = p.piece.episode {
+                    let show = Title(id: p.piece.id, mediaType: .tv, name: p.piece.name, posterPath: p.piece.poster, backdropPath: p.piece.backdrop)
+                    let episode = Episode(id: p.piece.id * 10_000 + s * 100 + e, seasonNumber: s, episodeNumber: e, name: p.piece.detail ?? "Episode \(e)",
+                                          overview: nil, stillPath: nil, airDate: nil, runtime: p.piece.minutes)
+                    slots.append(.episode(UpNext(show: show, episode: episode, remaining: 0, runtime: p.piece.minutes)))
+                } else {
+                    let film = Title(id: p.piece.id, mediaType: .movie, name: p.piece.name, posterPath: p.piece.poster, backdropPath: p.piece.backdrop)
+                    let position = Int(Store.shared.tracked(p.piece.id, .movie)?.position ?? 0)
+                    slots.append(.film(Film(title: film, position: position, runtime: p.piece.minutes)))
+                }
+                if i < planned.count - 1 {
+                    let gap = Int(planned[i + 1].start.timeIntervalSince(p.end) / 60)
+                    if gap > 0 { slots.append(.intermission(gap)) }
+                }
+            }
+            return slots
+        }
+        marathon = nil
         let films = Store.shared.all(.watching).filter { $0.mediaType == .movie && $0.runtime > 0 }
             .map { Slot.film(Film(title: $0.title, position: Int($0.position), runtime: Int($0.runtime))) }
         var slots = Array(upNext.prefix(1).map(Slot.episode)) + films + upNext.dropFirst().map(Slot.episode)
         let used = slots.reduce(0) { $0 + $1.minutes }
-        let left = Int(Self.lightsUp().timeIntervalSince(Self.doors()) / 60) - used
+        let left = Int(Self.lightsUp().timeIntervalSince(doors) / 60) - used
         if let pick = Store.shared.all(.watchlist).first(where: {
             $0.mediaType == .movie && $0.runtime > 0 && Int($0.runtime) <= left && ($0.releaseDate.map { DateText.isPast($0) } ?? true)
         }) {
@@ -179,7 +207,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
     }
 
     private func startTimes() -> [Date] {
-        var t = Self.doors()
+        var t = doors
         return programme.map { slot in defer { t += TimeInterval(slot.minutes * 60) }; return t }
     }
 
@@ -189,7 +217,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             Store.shared.setWatched([EpisodeKey(season: u.episode.seasonNumber, episode: u.episode.episodeNumber)], watched: true, show: u.show, runtime: u.runtime)
         case .film(let f), .pick(let f):
             Store.shared.track(f.title, status: .seen, runtime: f.runtime)
-        case .free: break
+        case .free, .intermission: break
         }
         Haptics.success()
     }
@@ -225,12 +253,13 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
     private func configureDataSource() {
         let headerCellReg = UICollectionView.CellRegistration<ProgrammeHeaderCell, Item> { [unowned self] cell, _, _ in
             let used = programme.reduce(0) { $0 + $1.minutes }
-            cell.configure(doors: Self.doors(), lightsUp: Self.lightsUp(), booked: used, slots: programme.filter { $0 != .free }.count, empty: Store.shared.all().isEmpty)
+            cell.configure(doors: doors, lightsUp: Self.lightsUp(), booked: used, slots: programme.filter { $0.title != nil }.count,
+                           empty: Store.shared.all().isEmpty, marathon: marathon?.name)
             cell.onDiscover = { [weak self] in self?.openSearch() }
         }
         let slotReg = UICollectionView.CellRegistration<ProgrammeCell, Item> { [unowned self] cell, _, item in
             guard case .slot(let slot) = item, let i = programme.firstIndex(of: slot) else { return }
-            cell.configure(slot, start: startTimes()[i], isNow: i == 0 && Self.doors() <= .now)
+            cell.configure(slot, start: startTimes()[i], isNow: i == 0 && doors <= .now)
             cell.onTorn = { [weak self] in self?.finish(slot) }
         }
         let upcomingReg = UICollectionView.CellRegistration<UpcomingCell, Item> { cell, _, item in
@@ -283,6 +312,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         let title: Title
         switch item {
         case .slot(.free): openSearch(); return
+        case .slot(.intermission): return
         case .slot(let s): guard let t = s.title else { return }; title = t
         case .upcoming(let u): title = u.title
         case .trending(let t), .watchlist(let t): title = t
@@ -346,7 +376,7 @@ final class ProgrammeHeaderCell: UICollectionViewCell {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(doors: Date, lightsUp: Date, booked: Int, slots: Int, empty: Bool) {
+    func configure(doors: Date, lightsUp: Date, booked: Int, slots: Int, empty: Bool, marathon: String?) {
         let now = Date.now
         date.setCaps(now.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)))
         time.setCaps(now.formatted(.dateTime.hour().minute()), kern: 1.2)
@@ -356,6 +386,9 @@ final class ProgrammeHeaderCell: UICollectionViewCell {
         if empty {
             (line1, line2) = ("Nothing on", "tonight, yet.")
             body.text = "Stash a film or start a show, and tonight's programme builds itself here."
+        } else if let marathon, slots > 0 {
+            (line1, line2) = (DateText.runtime(booked), doors > now ? "starts \(doors.formatted(.dateTime.hour().minute()))" : "marathon day")
+            body.text = "Today's stretch of \(marathon). Tear each stub as you go and the rest of the plan keeps up."
         } else if doors > now, slots > 0 {
             (line1, line2) = (DateText.runtime(booked), "on tonight")
             body.text = "Doors at \(doors.formatted(.dateTime.hour().minute())). Here's what's showing, from what you're in the middle of."
@@ -468,9 +501,9 @@ final class ProgrammeCell: UICollectionViewCell {
     func configure(_ slot: TonightViewController.Slot, start: Date, isNow: Bool) {
         time.setCaps(isNow ? "Now" : start.formatted(.dateTime.hour().minute()), kern: 1)
         time.textColor = isNow ? UIColor(red: 1, green: 0.35, blue: 0.3, alpha: 1) : Theme.tertiary
+        let isFree: Bool = { switch slot { case .free, .intermission: true; default: false } }()
         // Cards are as tall as they run, within reason.
-        height.constant = slot == .free ? 52 : min(max(CGFloat(slot.minutes) * 2.4, 124), 240)
-        let isFree = slot == .free
+        height.constant = isFree ? 52 : min(max(CGFloat(slot.minutes) * 2.4, 124), 240)
         card.directionalLayoutMargins.top = isFree ? 19 : 14
         [image, code, name, sub, stub].forEach { $0.isHidden = isFree }
         dashed.isHidden = !isFree
@@ -511,6 +544,10 @@ final class ProgrammeCell: UICollectionViewCell {
             code.isHidden = false
             code.setCaps("Time to spare · find a short", kern: 1.2)
             accessibilityLabel = "Time to spare. Find something short"
+        case .intermission(let m):
+            code.isHidden = false
+            code.setCaps("Intermission · \(m) min", kern: 1.2)
+            accessibilityLabel = "Intermission, \(m) minutes"
         }
         accessibilityCustomActions = isFree ? nil : [UIAccessibilityCustomAction(name: stub.accessibilityLabel ?? "Done") { [weak self] _ in
             self?.stub.tear(); return true

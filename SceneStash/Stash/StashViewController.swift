@@ -18,6 +18,19 @@ final class StashViewController: UIViewController, UICollectionViewDelegate {
             self?.present(UINavigationController(rootViewController: SettingsViewController()), animated: true)
         })
         navigationItem.rightBarButtonItem?.accessibilityLabel = "Settings"
+        let extras = UIBarButtonItem(image: UIImage(systemName: "sparkles"), menu: UIMenu(children: [
+            UIAction(title: "The stub book", image: UIImage(systemName: "ticket")) { [weak self] _ in
+                self?.withPass { self?.navigationController?.pushViewController(StubBookViewController(), animated: true) }
+            },
+            UIAction(title: "Your year, on film", image: UIImage(systemName: "film.stack")) { [weak self] _ in
+                self?.withPass { self?.present(YearViewController(), animated: true) }
+            },
+            UIAction(title: "Marathons", image: UIImage(systemName: "calendar.badge.clock")) { [weak self] _ in
+                self?.withPass { self?.navigationController?.pushViewController(MarathonListViewController(), animated: true) }
+            },
+        ]))
+        extras.accessibilityLabel = "Extras"
+        navigationItem.rightBarButtonItems = [navigationItem.rightBarButtonItem!, extras]
         header.shelves.addAction(UIAction { [weak self] _ in Haptics.tap(); self?.reload(animated: true) }, for: .valueChanged)
 
         collectionView.backgroundColor = .clear

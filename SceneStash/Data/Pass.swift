@@ -23,7 +23,13 @@ final class Pass {
 
     var trialEnds: Date? { trialStarted?.addingTimeInterval(Self.trialLength) }
     var trialActive: Bool { trialEnds.map { $0 > .now } ?? false }
-    var isUnlocked: Bool { owned || trialActive }
+    var isUnlocked: Bool {
+        #if DEBUG
+        // Local previews only: launch with `-PreviewUnlocked YES`. Not compiled into release builds.
+        if UserDefaults.standard.bool(forKey: "PreviewUnlocked") { return true }
+        #endif
+        return owned || trialActive
+    }
 
     private init() {}
 
