@@ -70,6 +70,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         applySnapshot()
         load()
         NotificationCenter.default.addObserver(self, selector: #selector(storeChanged), name: .NSManagedObjectContextObjectsDidChange, object: Store.shared.context)
+        NotificationCenter.default.addObserver(self, selector: #selector(storeChanged), name: .watchChanged, object: nil)
     }
 
     // MARK: Loading
@@ -450,12 +451,20 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         let progressReg = UICollectionView.CellRegistration<FilmProgressCell, Item> { [unowned self] cell, _, _ in
             let runtime = detail?.runtime ?? 0
             let title = detail?.title ?? item
-            cell.configure(position: Int(Store.shared.tracked(item.id, item.mediaType)?.position ?? 0), runtime: runtime, accent: accent)
+            let session = WatchSession.shared.state.flatMap { $0.id == item.id ? $0 : nil }
+            cell.configure(position: Int(Store.shared.tracked(item.id, item.mediaType)?.position ?? 0), runtime: runtime, accent: accent, live: session)
             cell.onCommit = { Store.shared.setPosition($0, for: title, runtime: runtime) }
             cell.onFinished = {
+                if WatchSession.shared.isWatching(title.id) { Task { await WatchSession.shared.finish() }; return }
                 Store.shared.track(title, status: .seen, runtime: runtime)
                 Haptics.success()
             }
+            let stinger = (detail?.midCredits ?? false) || (detail?.afterCredits ?? false)
+            cell.onStart = { [weak self] seconds in
+                self?.withPass { Task { await WatchSession.shared.start(title, runtime: runtime, from: seconds, stinger: stinger) } }
+            }
+            cell.onPause = { Task { await WatchSession.shared.pause() } }
+            cell.onResume = { Task { await WatchSession.shared.resume() } }
         }
         let stingerReg = UICollectionView.CellRegistration<StingerCell, Item> { [unowned self] cell, _, _ in
             cell.configure(mid: detail?.midCredits ?? false, after: detail?.afterCredits ?? false)

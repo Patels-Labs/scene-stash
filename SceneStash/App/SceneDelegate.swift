@@ -23,6 +23,10 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
     }
 
+    // Keep the film's saved place current with any Start now session.
+    func sceneWillResignActive(_ scene: UIScene) { WatchSession.shared.savePosition() }
+    func sceneDidBecomeActive(_ scene: UIScene) { WatchSession.shared.savePosition() }
+
     private static func nav(_ root: UIViewController) -> UINavigationController {
         let nav = UINavigationController(rootViewController: root)
         nav.navigationBar.prefersLargeTitles = true
