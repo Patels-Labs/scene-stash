@@ -11,12 +11,6 @@ Open an issue at [github.com/patelheet30/scene-stash/issues](https://github.com/
 **My stash isn't on my new phone.**
 Sign in to the same Apple ID and make sure iCloud is on for Scene Stash (Settings › [your name] › iCloud). Settings › iCloud in the app shows when it last synced.
 
-**How do I cancel the All-Access Pass?**
-In Scene Stash, Settings › All-Access Pass › Manage, or in iOS Settings › [your name] › Subscriptions. Cancel at least 24 hours before it renews. You keep the pass until the end of the period you've paid for.
-
-**I bought the pass but it isn't unlocked.**
-Open the pass screen and tap Restore. Make sure you're signed in with the Apple ID you bought it with.
-
 **Premiere alerts don't arrive.**
 Turn on notifications for Scene Stash in iOS Settings › Notifications, and switch on Premiere alerts in the app's Settings.
 

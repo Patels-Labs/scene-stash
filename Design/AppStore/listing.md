@@ -35,8 +35,7 @@ Every film tells you if there's a scene during or after the credits, so you know
 WHERE TO WATCH
 Choose your streaming services once and see which ones carry each title in your region.
 
-ALL-ACCESS PASS
-Tracking is free. The All-Access Pass adds the extras, with a free trial for new subscribers:
+THE EXTRAS, ALL FREE
 • Your year, on film: a year-end recap of everything you watched, ready to share
 • Now Showing: tap Start now and a Live Activity keeps time on your Lock Screen and in the Dynamic Island, with a pause for ads and breaks
 • Home Screen widgets for tonight's programme, the next premiere and your punch card
@@ -45,12 +44,9 @@ Tracking is free. The All-Access Pass adds the extras, with a free trial for new
 • Premiere alerts the evening a new episode lands and before a new season starts
 • Alternate app icons, including limited-edition ones around the holidays
 
-The All-Access Pass is a yearly auto-renewing subscription. Payment is charged to your Apple ID at confirmation of purchase, after any free trial ends. It renews automatically unless cancelled at least 24 hours before the end of the current period. Manage or cancel it in your App Store account settings.
-
 PRIVATE BY DESIGN
-No accounts, no ads, no tracking. Your stash syncs through your own iCloud.
+Free, with no accounts, no ads and no tracking. Your stash syncs through your own iCloud.
 
-Terms of Use: https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
 Privacy Policy: https://github.com/patelheet30/scene-stash/blob/main/docs/privacy.md
 
 This product uses the TMDB API but is not endorsed or certified by TMDB. Streaming availability provided by JustWatch.
@@ -68,12 +64,8 @@ https://github.com/patelheet30/scene-stash/blob/main/docs/privacy.md
 2026 Heet Dhruval Patel
 
 ## App Review notes
-Scene Stash has no accounts or sign-in.
+Scene Stash is free, with no accounts, sign-in or in-app purchases.
 
-The All-Access Pass is a yearly auto-renewing subscription (com.heetpatel.scenestash.yearly) with a 2-week free trial. Core tracking is free.
+Live Activity: open any film → Start now (pause/resume from the Lock Screen). Widgets can be added from the Home Screen. Extras (stub book, year recap, marathon planner) are under the sparkles button on the Stash tab.
 
-To reach the paywall: Stash tab → sparkles button (top right) → any item; Stash tab → gear → All-Access Pass; or a film's page → Start now. Restore is on the paywall.
-
-With the pass: open a film → Start now for the Live Activity (pause/resume from the Lock Screen). Widgets can be added from the Home Screen.
-
-Film and show data comes from the TMDB API.
+Film and show data comes from the TMDB API under its free, non-commercial terms, with the required attribution in Settings.

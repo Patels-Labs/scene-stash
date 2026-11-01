@@ -12,7 +12,6 @@ Scene Stash keeps track of the films and shows you watch. It's built to know as 
 ## What leaves your device
 
 - **Film and show information** comes from [The Movie Database (TMDB)](https://www.themoviedb.org). To show you titles, posters, cast, seasons and where to watch, the app sends TMDB the title IDs you open, your search terms, and your region. It doesn't send your name, email, or anything that identifies you. TMDB's own [privacy policy](https://www.themoviedb.org/privacy-policy) applies to those requests.
-- **Purchases** of the All-Access Pass are handled entirely by Apple. We receive confirmation that a subscription is active, never your payment details.
 
 ## What we don't do
 

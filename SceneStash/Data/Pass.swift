@@ -10,6 +10,9 @@ extension Notification.Name {
 final class Pass {
     static let shared = Pass()
     static let yearlyID = "com.heetpatel.scenestash.yearly"
+    /// Off: everything is free and StoreKit is never touched. Turning it back on needs a TMDB commercial licence,
+    /// since TMDB's free API terms are for non-commercial apps only.
+    static let selling = false
     static let privacyURL = URL(string: "https://github.com/patelheet30/scene-stash/blob/main/docs/privacy.md")!
     static let termsURL = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!
 
@@ -28,7 +31,7 @@ final class Pass {
         // Local previews only: launch with `-PreviewUnlocked YES`. Not compiled into release builds.
         if UserDefaults.standard.bool(forKey: "PreviewUnlocked") { return true }
         #endif
-        return subscribed
+        return !Self.selling || subscribed
     }
 
     /// "2 weeks", from the introductory offer as configured in App Store Connect.
@@ -49,6 +52,7 @@ final class Pass {
 
     /// Call once at launch: loads the product, reads the subscription, and listens for changes made elsewhere.
     func start() {
+        guard Self.selling else { return }
         updates = Task {
             for await update in Transaction.updates {
                 if case .verified(let t) = update { await t.finish() }
