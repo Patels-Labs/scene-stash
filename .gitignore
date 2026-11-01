@@ -1,0 +1,8 @@
+.DS_Store
+*.xcodeproj
+build/
+DerivedData/
+Config/Secrets.xcconfig
+*.p8
+*.p12
+*.mobileprovision

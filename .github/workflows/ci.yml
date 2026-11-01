@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate project
+        run: |
+          brew install xcodegen
+          echo "TMDB_TOKEN = ${{ secrets.TMDB_TOKEN }}" > Config/Secrets.xcconfig
+          xcodegen
+          xcodebuild -version
+      - name: Simulator build
+        if: github.event_name == 'pull_request'
+        run: |
+          xcodebuild build -project SceneStash.xcodeproj -scheme SceneStash \
+            -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet
+      - name: Archive and upload to TestFlight
+        if: github.event_name != 'pull_request'
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          KEY="$RUNNER_TEMP/AuthKey.p8"
+          echo "$ASC_KEY_P8" > "$KEY"
+          AUTH="-allowProvisioningUpdates -authenticationKeyPath $KEY -authenticationKeyID $ASC_KEY_ID -authenticationKeyIssuerID $ASC_ISSUER_ID"
+          xcodebuild archive -project SceneStash.xcodeproj -scheme SceneStash -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath build/SceneStash.xcarchive \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} $AUTH -quiet
+          xcodebuild -exportArchive -archivePath build/SceneStash.xcarchive \
+            -exportOptionsPlist ExportOptions.plist -exportPath build/export $AUTH
