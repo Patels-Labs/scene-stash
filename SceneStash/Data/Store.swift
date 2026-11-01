@@ -125,8 +125,9 @@ final class Store {
         NotificationCenter.default.addObserver(forName: NSPersistentCloudKitContainer.eventChangedNotification, object: container, queue: .main) { note in
             guard let event = note.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey] as? NSPersistentCloudKitContainer.Event,
                   let ended = event.endDate else { return }
+            let error = event.error?.localizedDescription
             MainActor.assumeIsolated {
-                Store.shared.lastSync = (ended, event.error?.localizedDescription)
+                Store.shared.lastSync = (ended, error)
                 NotificationCenter.default.post(name: .syncChanged, object: nil)
             }
         }
