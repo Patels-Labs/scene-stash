@@ -37,8 +37,10 @@ jobs:
           KEY="$RUNNER_TEMP/AuthKey.p8"
           echo "$ASC_KEY_P8" > "$KEY"
           AUTH="-allowProvisioningUpdates -authenticationKeyPath $KEY -authenticationKeyID $ASC_KEY_ID -authenticationKeyIssuerID $ASC_ISSUER_ID"
+          # Sign for distribution so Apple's cloud-managed certificate is used; signing for development made
+          # every fresh runner mint a new development certificate until the account hit its limit.
           xcodebuild archive -project SceneStash.xcodeproj -scheme SceneStash -configuration Release \
             -destination 'generic/platform=iOS' -archivePath build/SceneStash.xcarchive \
-            CURRENT_PROJECT_VERSION=${{ github.run_number }} $AUTH -quiet
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} CODE_SIGN_IDENTITY="Apple Distribution" $AUTH -quiet
           xcodebuild -exportArchive -archivePath build/SceneStash.xcarchive \
             -exportOptionsPlist ExportOptions.plist -exportPath build/export $AUTH
