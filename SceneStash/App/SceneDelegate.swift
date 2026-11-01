@@ -6,7 +6,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: windowScene)
-        window.tintColor = Theme.amber
+        window.tintColor = Theme.accent
         window.overrideUserInterfaceStyle = .dark
         let tabs = UITabBarController(tabs: [
             UITab(title: "Tonight", image: UIImage(systemName: "popcorn"), identifier: "tonight") { _ in Self.nav(TonightViewController()) },
@@ -15,6 +15,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         ])
         window.rootViewController = tabs
         window.makeKeyAndVisible()
+        Task { await Store.shared.backfillRuntimes() }
         self.window = window
         if !Prefs.onboarded {
             // Next runloop, once the tab controller is in the window hierarchy.

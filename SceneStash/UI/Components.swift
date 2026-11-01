@@ -9,7 +9,6 @@ enum Haptics {
 
 enum TicketShape {
     /// Rounded ticket outline with semicircle notches on the left and right edges.
-    /// `notchAt` places the notches as a fraction of height (0.5 = middle).
     static func path(in r: CGRect, corner: CGFloat = 14, notch: CGFloat = 10, notchAt: CGFloat = 0.5) -> UIBezierPath {
         let p = UIBezierPath()
         let ny = r.minY + r.height * notchAt
@@ -30,13 +29,9 @@ enum TicketShape {
         return p
     }
 
-    /// A vertical dotted perforation line at `x`.
-    static func perforation(x: CGFloat, in r: CGRect, inset: CGFloat = 10) -> CAShapeLayer {
+    /// A vertical dotted perforation line.
+    static func perforation() -> CAShapeLayer {
         let layer = CAShapeLayer()
-        let path = UIBezierPath()
-        path.move(to: CGPoint(x: x, y: r.minY + inset))
-        path.addLine(to: CGPoint(x: x, y: r.maxY - inset))
-        layer.path = path.cgPath
         layer.lineWidth = 2
         layer.lineCap = .round
         layer.lineDashPattern = [0.1, 7]
@@ -45,81 +40,21 @@ enum TicketShape {
     }
 }
 
-/// Animated film grain. Sits behind content, so text stays crisp; static under Reduce Motion.
-final class GrainView: UIView {
-    private static let noise: UIImage = {
-        let size = 160
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size), format: {
-            let f = UIGraphicsImageRendererFormat(); f.scale = 1; return f
-        }())
-        return renderer.image { ctx in
-            var rng = SystemRandomNumberGenerator()
-            for y in 0..<size { for x in 0..<size {
-                let v = CGFloat(UInt8.random(in: 0...255, using: &rng)) / 255
-                UIColor(white: v, alpha: CGFloat.random(in: 0...0.5, using: &rng)).setFill()
-                ctx.fill(CGRect(x: x, y: y, width: 1, height: 1))
-            } }
-        }
-    }()
-
-    private let tile = CALayer()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isUserInteractionEnabled = false
-        clipsToBounds = true
-        alpha = 0.06
-        tile.backgroundColor = UIColor(patternImage: Self.noise).cgColor
-        layer.addSublayer(tile)
-        NotificationCenter.default.addObserver(self, selector: #selector(restart), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        tile.frame = bounds.insetBy(dx: -80, dy: -80)
-        restart()
-    }
-
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        restart()
-    }
-
-    @objc private func restart() {
-        tile.removeAllAnimations()
-        guard window != nil, !UIAccessibility.isReduceMotionEnabled else { return }
-        // Discrete jumps read as grain flicker rather than sliding texture.
-        let jitter = CAKeyframeAnimation(keyPath: "transform.translation")
-        jitter.values = (0..<8).map { _ in NSValue(cgSize: CGSize(width: .random(in: -60...60), height: .random(in: -60...60))) }
-        jitter.calculationMode = .discrete
-        jitter.duration = 0.66
-        jitter.repeatCount = .infinity
-        tile.add(jitter, forKey: "grain")
-    }
-}
-
-/// Serif section title with an optional mono caption.
+/// Section title: a tracked caption over a bold title, with an optional trailing action.
 final class SectionHeader: UICollectionReusableView {
     static let kind = "section-header"
-    let title = UILabel()
-    let caption = UILabel()
-    /// Optional trailing action, e.g. "Punch all".
+    let title = UILabel.make(Theme.text(.title2, weight: .bold))
+    let caption = UILabel.make(Theme.label(), Theme.tertiary)
     let accessory = UIButton(type: .system)
     var onAccessory: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        title.font = Theme.serif(.title2)
-        title.textColor = Theme.paper
-        title.adjustsFontForContentSizeCategory = true
-        caption.font = Theme.mono(.caption2)
-        caption.textColor = Theme.amber
-        caption.adjustsFontForContentSizeCategory = true
         let stack = UIStackView(arrangedSubviews: [caption, title])
         stack.axis = .vertical
-        stack.spacing = 2
-        accessory.titleLabel?.font = Theme.mono(.caption1, weight: .bold)
+        stack.spacing = 3
+        accessory.titleLabel?.font = Theme.label(.caption1, weight: .bold)
+        accessory.tintColor = Theme.accent
         accessory.isHidden = true
         accessory.addAction(UIAction { [weak self] _ in self?.onAccessory?() }, for: .primaryActionTriggered)
         let row = UIStackView(arrangedSubviews: [stack, accessory])
@@ -132,7 +67,7 @@ final class SectionHeader: UICollectionReusableView {
 
     func configure(_ text: String, caption: String? = nil, accessory: String? = nil, action: (() -> Void)? = nil) {
         title.text = text
-        self.caption.text = caption?.uppercased()
+        self.caption.setCaps(caption)
         self.caption.isHidden = caption == nil
         self.accessory.setTitle(accessory?.uppercased(), for: .normal)
         self.accessory.isHidden = accessory == nil
@@ -140,42 +75,39 @@ final class SectionHeader: UICollectionReusableView {
     }
 }
 
-/// Poster with a springy press state and optional status badge.
+/// Poster thumbnail with a printed-card edge, springy press and status badge.
 final class PosterCell: UICollectionViewCell {
     let imageView = UIImageView()
     private let badge = UIImageView()
-    private let fallback = UILabel()
+    private let fallback = UILabel.make(Theme.display(20), Theme.secondary, lines: 4)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
-        imageView.layer.cornerRadius = 10
+        imageView.layer.cornerRadius = 12
         imageView.layer.cornerCurve = .continuous
-        imageView.layer.borderWidth = 0.5
-        imageView.layer.borderColor = UIColor(white: 1, alpha: 0.12).cgColor
-        imageView.backgroundColor = Theme.inkRaised
+        imageView.layer.borderWidth = 1
+        imageView.layer.borderColor = UIColor(white: 1, alpha: 0.1).cgColor
+        imageView.backgroundColor = Theme.surface
         contentView.addSubview(imageView)
         imageView.pin(to: contentView)
 
-        fallback.font = Theme.serif(.footnote)
-        fallback.textColor = Theme.muted
-        fallback.numberOfLines = 4
         fallback.textAlignment = .center
         imageView.addSubview(fallback)
-        fallback.pin(to: imageView, inset: 8)
+        fallback.pin(to: imageView, inset: 10)
 
-        badge.tintColor = Theme.ink
-        badge.backgroundColor = Theme.amber
+        badge.tintColor = .black
+        badge.backgroundColor = Theme.accent
         badge.contentMode = .center
-        badge.preferredSymbolConfiguration = .init(pointSize: 11, weight: .bold)
+        badge.preferredSymbolConfiguration = .init(pointSize: 10, weight: .heavy)
         badge.layer.cornerRadius = 11
         badge.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(badge)
         NSLayoutConstraint.activate([
             badge.widthAnchor.constraint(equalToConstant: 22), badge.heightAnchor.constraint(equalToConstant: 22),
-            badge.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
-            badge.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -6),
+            badge.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 7),
+            badge.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -7),
         ])
         isAccessibilityElement = true
         accessibilityTraits = .button
@@ -184,7 +116,7 @@ final class PosterCell: UICollectionViewCell {
 
     func configure(_ title: Title) {
         imageView.setImage(TMDB.imageURL(title.posterPath, .poster))
-        fallback.text = title.posterPath == nil ? title.name : nil
+        fallback.text = title.posterPath == nil ? title.name.uppercased() : nil
         let status = Store.shared.tracked(title.id, title.mediaType)?.status
         badge.image = status.map { UIImage(systemName: $0.symbol) } ?? nil
         badge.isHidden = status == nil
@@ -192,12 +124,36 @@ final class PosterCell: UICollectionViewCell {
     }
 
     override var isHighlighted: Bool {
-        didSet {
-            UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.6, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState]) {
-                self.transform = self.isHighlighted ? CGAffineTransform(scaleX: 0.94, y: 0.94) : .identity
-            }
+        didSet { Spring.press(self, isHighlighted, scale: 0.95) }
+    }
+}
+
+enum Spring {
+    static func press(_ view: UIView, _ down: Bool, scale: CGFloat = 0.96) {
+        UIView.animate(withDuration: 0.4, delay: 0, usingSpringWithDamping: 0.6, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState]) {
+            view.transform = down ? CGAffineTransform(scaleX: scale, y: scale) : .identity
         }
     }
+}
+
+/// White capsule call to action, the one primary button style in the app.
+final class PillButton: UIButton {
+    convenience init(_ title: String, image: String? = nil, inverted: Bool = false) {
+        self.init(configuration: .filled())
+        configuration?.title = title
+        configuration?.image = image.flatMap { UIImage(systemName: $0) }
+        configuration?.imagePadding = 8
+        configuration?.cornerStyle = .capsule
+        configuration?.buttonSize = .large
+        configuration?.baseBackgroundColor = inverted ? Theme.surfaceHigh : .white
+        configuration?.baseForegroundColor = inverted ? .white : .black
+        configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { a in
+            var a = a; a.font = Theme.text(.headline, weight: .semibold); return a
+        }
+        heightAnchor.constraint(greaterThanOrEqualToConstant: 54).isActive = true
+    }
+
+    override var isHighlighted: Bool { didSet { Spring.press(self, isHighlighted) } }
 }
 
 extension UIView {
@@ -213,12 +169,8 @@ extension UIView {
 }
 
 extension UIViewController {
-    /// Ink background with grain, shared by every main screen.
     func installBackdrop() {
-        view.backgroundColor = Theme.ink
-        let grain = GrainView()
-        view.insertSubview(grain, at: 0)
-        grain.pin(to: view)
+        view.backgroundColor = Theme.bg
     }
 
     func showError(_ error: Error) {
@@ -254,30 +206,28 @@ extension UIViewController {
     }
 }
 
-/// Fixed-size poster grid / row helpers for compositional layouts.
 enum Layouts {
-    static func posterRow(width: CGFloat = 120, header: Bool = true) -> NSCollectionLayoutSection {
+    static func posterRow(width: CGFloat = 116, header: Bool = true) -> NSCollectionLayoutSection {
         let item = NSCollectionLayoutItem(layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .fractionalHeight(1)))
         let group = NSCollectionLayoutGroup.horizontal(layoutSize: .init(widthDimension: .absolute(width), heightDimension: .absolute(width * 1.5)), subitems: [item])
         let section = NSCollectionLayoutSection(group: group)
         section.orthogonalScrollingBehavior = .continuousGroupLeadingBoundary
-        section.interGroupSpacing = 12
-        section.contentInsets = .init(top: 10, leading: 20, bottom: 28, trailing: 20)
+        section.interGroupSpacing = 10
+        section.contentInsets = .init(top: 12, leading: 20, bottom: 36, trailing: 20)
         if header { section.boundarySupplementaryItems = [headerItem()] }
         return section
     }
 
     static func posterGrid(columns: Int = 3) -> NSCollectionLayoutSection {
         let item = NSCollectionLayoutItem(layoutSize: .init(widthDimension: .fractionalWidth(1 / CGFloat(columns)), heightDimension: .fractionalHeight(1)))
-        item.contentInsets = .init(top: 6, leading: 6, bottom: 6, trailing: 6)
+        item.contentInsets = .init(top: 5, leading: 5, bottom: 5, trailing: 5)
         let group = NSCollectionLayoutGroup.horizontal(layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .fractionalWidth(1.5 / CGFloat(columns))), subitems: [item])
         let section = NSCollectionLayoutSection(group: group)
-        section.contentInsets = .init(top: 8, leading: 14, bottom: 24, trailing: 14)
+        section.contentInsets = .init(top: 8, leading: 15, bottom: 24, trailing: 15)
         return section
     }
 
     static func headerItem() -> NSCollectionLayoutBoundarySupplementaryItem {
-        let header = NSCollectionLayoutBoundarySupplementaryItem(layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .estimated(44)), elementKind: SectionHeader.kind, alignment: .top)
-        return header
+        NSCollectionLayoutBoundarySupplementaryItem(layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .estimated(48)), elementKind: SectionHeader.kind, alignment: .top)
     }
 }

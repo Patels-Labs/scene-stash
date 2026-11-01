@@ -104,14 +104,20 @@ final class Store {
 
     func watched(show: Int) -> Set<EpisodeKey> { Set(episodes(show: show).map(\.key)) }
 
-    struct Stats { let minutes: Int; let titles: Int; let episodes: Int; let streak: Int }
+    /// Number of things watched per calendar day, for the year grid.
+    func watchDays(calendar: Calendar = .current) -> [Date: Int] {
+        let dates = all().filter { $0.status == .seen }.compactMap(\.watchedAt) + episodes().compactMap(\.watchedAt)
+        return dates.reduce(into: [:]) { $0[calendar.startOfDay(for: $1), default: 0] += 1 }
+    }
+
+    struct Stats { let minutes: Int; let titles: Int; let films: Int; let episodes: Int; let streak: Int }
 
     func stats() -> Stats {
         let seen = all().filter { $0.status == .seen && $0.mediaType == .movie }
         let eps = episodes()
         let minutes = seen.reduce(0) { $0 + Int($1.runtime) } + eps.reduce(0) { $0 + Int($1.runtime) }
         let days = seen.compactMap(\.watchedAt) + eps.compactMap(\.watchedAt)
-        return Stats(minutes: minutes, titles: all().count, episodes: eps.count, streak: Progress.streak(days: days))
+        return Stats(minutes: minutes, titles: all().count, films: seen.count, episodes: eps.count, streak: Progress.streak(days: days))
     }
 
     // MARK: Writing
@@ -168,6 +174,15 @@ final class Store {
         } else {
             save()
         }
+    }
+
+    /// Titles marked seen without details (e.g. from onboarding) have no runtime; fill them in so hours add up.
+    func backfillRuntimes() async {
+        for item in all().filter({ $0.runtime == 0 && $0.status != .watchlist }) {
+            guard let detail = try? await TMDB.shared.detail(Int(item.tmdbID), item.mediaType), let runtime = detail.runtime else { continue }
+            item.runtime = Int32(runtime)
+        }
+        save()
     }
 
     func save() {
