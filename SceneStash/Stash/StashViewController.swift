@@ -191,13 +191,14 @@ private final class YearGrid: UIView {
                 guard back >= 0, let day = cal.date(byAdding: .day, value: -back, to: today) else { continue }
                 let cell = CGRect(x: CGFloat(w) * (dot + gap), y: CGFloat(d) * (dot + gap), width: dot, height: dot)
                 let count = days[day] ?? 0
-                let r = count == 0 ? cell.insetBy(dx: dot * 0.22, dy: dot * 0.22) : cell
+                // Everything stays inside its cell so the ring and lit dots never clip at the edges.
+                let r = cell.insetBy(dx: dot * (count == 0 ? 0.24 : 0.1), dy: dot * (count == 0 ? 0.24 : 0.1))
                 let path = UIBezierPath(ovalIn: r)
                 (count == 0 ? UIColor(white: 1, alpha: 0.13) : Theme.accent.withAlphaComponent(min(0.45 + CGFloat(count) * 0.2, 1))).setFill()
                 path.fill()
                 if back == 0 {
                     UIColor.white.setStroke()
-                    let ring = UIBezierPath(ovalIn: cell.insetBy(dx: -1.5, dy: -1.5))
+                    let ring = UIBezierPath(ovalIn: cell.insetBy(dx: 0.6, dy: 0.6))
                     ring.lineWidth = 1.2
                     ring.stroke()
                 }
