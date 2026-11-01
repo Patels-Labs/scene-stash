@@ -47,18 +47,16 @@ THE EXTRAS, ALL FREE
 PRIVATE BY DESIGN
 Free, with no accounts, no ads and no tracking. Your stash syncs through your own iCloud.
 
-Privacy Policy: https://github.com/patelheet30/scene-stash/blob/main/docs/privacy.md
-
 This product uses the TMDB API but is not endorsed or certified by TMDB. Streaming availability provided by JustWatch.
 
 ## Support URL
-https://github.com/patelheet30/scene-stash/blob/main/docs/support.md
+https://patelheet30.github.io/scene-stash-pages/support
 
 ## Marketing URL
 (leave blank)
 
 ## Privacy Policy URL (App Privacy section)
-https://github.com/patelheet30/scene-stash/blob/main/docs/privacy.md
+https://patelheet30.github.io/scene-stash-pages/privacy
 
 ## Copyright
 2026 Heet Dhruval Patel
