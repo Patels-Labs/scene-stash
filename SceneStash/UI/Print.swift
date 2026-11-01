@@ -9,10 +9,13 @@ final class FilmStripView: UIControl {
     var tint: UIColor = Theme.accent { didSet { setNeedsDisplay() } }
     /// Minutes the strip represents; drives haptic detents and VoiceOver.
     var runtime = 0 { didSet { updateAccessibility() } }
-    var interactive = false { didSet { isUserInteractionEnabled = interactive; accessibilityTraits = interactive ? .adjustable : .none } }
+    var interactive = false { didSet { isUserInteractionEnabled = interactive; accessibilityTraits = interactive ? .adjustable : .none; hold.isEnabled = interactive } }
     var frames = 12
     private let selection = UISelectionFeedbackGenerator()
     private var lastDetent = -1
+    /// Recognises any drag on the strip so the navigation controller's swipe-back waits for it to fail. Without it,
+    /// a horizontal scrub on iOS 26 starts the full-width back gesture, which cancels tracking mid-drag.
+    private let hold = UIPanGestureRecognizer()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -21,8 +24,20 @@ final class FilmStripView: UIControl {
         isOpaque = false
         isUserInteractionEnabled = false
         isAccessibilityElement = true
+        hold.cancelsTouchesInView = false
+        hold.isEnabled = false
+        addGestureRecognizer(hold)
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        var responder: UIResponder? = self
+        while let r = responder, !(r is UINavigationController) { responder = r.next }
+        guard let nav = responder as? UINavigationController else { return }
+        nav.interactiveContentPopGestureRecognizer?.require(toFail: hold)
+        nav.interactivePopGestureRecognizer?.require(toFail: hold)
+    }
 
     override func draw(_ rect: CGRect) {
         let b = bounds
@@ -70,6 +85,8 @@ final class FilmStripView: UIControl {
     }
     override func continueTracking(_ touch: UITouch, with event: UIEvent?) -> Bool { scrub(touch); return true }
     override func endTracking(_ touch: UITouch?, with event: UIEvent?) { sendActions(for: .editingDidEnd) }
+    // Keep where the drag got to even if the system takes the touch away.
+    override func cancelTracking(with event: UIEvent?) { sendActions(for: .editingDidEnd) }
 
     private func scrub(_ touch: UITouch) {
         let raw = Double(touch.location(in: self).x / max(bounds.width, 1))
