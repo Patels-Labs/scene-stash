@@ -28,6 +28,7 @@ final class SettingsViewController: UITableViewController {
             icloudStatus = status == .available ? "On" : "Off — sign in to iCloud to sync"
             tableView.reloadData()
         }
+        NotificationCenter.default.addObserver(tableView!, selector: #selector(UITableView.reloadData), name: .syncChanged, object: nil)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -88,6 +89,10 @@ final class SettingsViewController: UITableViewController {
         case .icloud:
             config.text = "iCloud"
             config.secondaryText = icloudStatus
+            if icloudStatus == "On", let sync = Store.shared.lastSync {
+                config.secondaryText = sync.error.map { "Sync failed: \($0)" }
+                    ?? "Synced \(sync.date.formatted(.relative(presentation: .named)))"
+            }
             config.image = UIImage(systemName: "icloud")
             cell.selectionStyle = .none
         case .replay:
