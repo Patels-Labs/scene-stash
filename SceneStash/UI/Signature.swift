@@ -43,6 +43,16 @@ final class TicketButton: UIButton {
         stubIcon.tintColor = .black
     }
 
+    /// A plain one-shot ticket: tapping tears it (e.g. "Mark watched").
+    func configure(label: String, symbol: String, accessibility: String) {
+        mainLabel.setCaps(label, kern: 1.6)
+        stubIcon.image = UIImage(systemName: symbol)
+        accessibilityLabel = accessibility
+        accessibilityHint = nil
+        menu = nil
+        showsMenuAsPrimaryAction = false
+    }
+
     /// nil = not in the stash yet.
     func configure(status: TrackStatus?, menu: UIMenu?) {
         if let status {

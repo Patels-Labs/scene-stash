@@ -148,7 +148,12 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         ratingBox.addArrangedSubview(reel)
         reel.onChange = { [weak self] value in
             guard let self else { return }
+            let earned = value >= 9 && !poster.foil
             Store.shared.setRating(value, for: detail?.title ?? item)
+            if earned {
+                poster.revealFoil()
+                Haptics.success()
+            }
         }
 
         trailerButton.configuration?.title = "Watch trailer"
