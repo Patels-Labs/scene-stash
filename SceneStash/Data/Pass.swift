@@ -33,6 +33,10 @@ final class Pass {
 
     /// "2 weeks", from the introductory offer as configured in App Store Connect.
     var trialLength: String? {
+        #if DEBUG
+        // Local previews only: `-PreviewTrial "2 weeks"` shows the trial wording without a store connection.
+        if let preview = UserDefaults.standard.string(forKey: "PreviewTrial") { return preview }
+        #endif
         guard trialEligible, let offer = yearly?.subscription?.introductoryOffer, offer.paymentMode == .freeTrial else { return nil }
         let p = offer.period
         let unit = switch p.unit { case .day: "day"; case .week: "week"; case .month: "month"; case .year: "year"; @unknown default: "day" }
