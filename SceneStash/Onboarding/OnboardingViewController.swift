@@ -38,6 +38,12 @@ final class OnboardingViewController: UIViewController {
             button.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
         ])
         button.alpha = 0
+        let spinner = UIActivityIndicatorView(style: .medium)
+        spinner.color = Theme.tertiary
+        spinner.startAnimating()
+        view.addSubview(spinner)
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor), spinner.centerYAnchor.constraint(equalTo: view.centerYAnchor)])
 
         Task {
             async let movies = TMDB.shared.titles(Reel(name: "", path: "movie/popular"))
@@ -46,6 +52,7 @@ final class OnboardingViewController: UIViewController {
             let all = ((try? await movies) ?? []).prefix(10) + ((try? await shows) ?? []).prefix(8) + ((try? await classics) ?? []).prefix(8)
             var seen = Set<Int>()
             titles = all.filter { $0.posterPath != nil && seen.insert($0.id).inserted }.shuffled()
+            spinner.removeFromSuperview()
             let intro = IntroBeat(titles: Array(titles.prefix(6)), glow: glow)
             show(intro, title: "Start your stash", animated: false)
             intro.play()

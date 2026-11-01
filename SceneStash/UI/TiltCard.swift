@@ -6,7 +6,7 @@ final class Motion {
     static let shared = Motion()
     private let manager = CMMotionManager()
     private let cards = NSHashTable<TiltCardView>.weakObjects()
-    private var reference: CMAttitude?
+    private var baseline: CGPoint?
     private(set) var tilt = CGPoint.zero
 
     func attach(_ card: TiltCardView) {
@@ -16,19 +16,23 @@ final class Motion {
 
     func detach(_ card: TiltCardView) {
         cards.remove(card)
-        if cards.count == 0 { manager.stopDeviceMotionUpdates(); reference = nil }
+        if cards.count == 0 { manager.stopDeviceMotionUpdates(); baseline = nil }
     }
 
     private func start() {
         guard manager.isDeviceMotionAvailable, !manager.isDeviceMotionActive, !UIAccessibility.isReduceMotionEnabled else { return }
         manager.deviceMotionUpdateInterval = 1 / 60
         manager.startDeviceMotionUpdates(to: .main) { [weak self] motion, _ in
-            guard let self, let attitude = motion?.attitude.copy() as? CMAttitude else { return }
-            // Tilt is relative to how the phone was held when cards appeared, eased so it follows the hand slowly.
-            if reference == nil { reference = attitude }
-            if let reference { attitude.multiply(byInverseOf: reference) }
-            let target = CGPoint(x: max(-1, min(1, attitude.roll / 0.5)), y: max(-1, min(1, attitude.pitch / 0.5)))
-            tilt = CGPoint(x: tilt.x + (target.x - tilt.x) * 0.15, y: tilt.y + (target.y - tilt.y) * 0.15)
+            guard let self, let attitude = motion?.attitude else { return }
+            // Tilt is measured against a slowly drifting baseline, so however you hold the phone
+            // the cards settle flat and only respond to movement.
+            let raw = CGPoint(x: attitude.roll, y: attitude.pitch)
+            var base = baseline ?? raw
+            base.x += (raw.x - base.x) * 0.012
+            base.y += (raw.y - base.y) * 0.012
+            baseline = base
+            let target = CGPoint(x: max(-1, min(1, (raw.x - base.x) / 0.35)), y: max(-1, min(1, (raw.y - base.y) / 0.35)))
+            tilt = CGPoint(x: tilt.x + (target.x - tilt.x) * 0.2, y: tilt.y + (target.y - tilt.y) * 0.2)
             for card in cards.allObjects { card.apply(tilt) }
         }
     }
@@ -134,6 +138,20 @@ final class TiltCardView: UIView {
         drift.repeatCount = .infinity
         drift.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         foilLayer.add(drift, forKey: "drift")
+    }
+
+    /// Foil sweeps across the card once, for the moment something earns it.
+    func revealFoil() {
+        foil = true
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        let flash = CABasicAnimation(keyPath: "opacity")
+        flash.fromValue = 1
+        flash.toValue = foilLayer.opacity
+        flash.duration = 1.2
+        flash.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        foilLayer.add(flash, forKey: "flash")
+        transform = CGAffineTransform(scaleX: 1.08, y: 1.08)
+        UIView.animate(withDuration: 0.7, delay: 0, usingSpringWithDamping: 0.45, initialSpringVelocity: 0.6) { self.transform = .identity }
     }
 
     func setPoster(_ path: String?, size: ImageSize = .poster) {

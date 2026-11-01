@@ -57,6 +57,8 @@ final class SectionHeader: UICollectionReusableView {
         accessory.tintColor = Theme.accent
         accessory.isHidden = true
         accessory.addAction(UIAction { [weak self] _ in self?.onAccessory?() }, for: .primaryActionTriggered)
+        accessory.setContentHuggingPriority(.required, for: .horizontal)
+        stack.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let row = UIStackView(arrangedSubviews: [stack, accessory])
         row.alignment = .lastBaseline
         addSubview(row)

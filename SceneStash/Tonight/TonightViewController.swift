@@ -100,7 +100,6 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
     }
 
     private func markWatched(_ item: UpNext) {
-        Haptics.thunk()
         Store.shared.setWatched([EpisodeKey(season: item.episode.seasonNumber, episode: item.episode.episodeNumber)], watched: true, show: item.show, runtime: item.runtime)
     }
 
@@ -274,21 +273,23 @@ final class UpNextCell: UICollectionViewCell {
     private let code = UILabel.make(Theme.label(.caption1, weight: .bold), Theme.accent)
     private let show = UILabel.make(Theme.display(40, weight: .black), Theme.text, lines: 2)
     private let episode = UILabel.make(Theme.text(.callout), Theme.secondary, lines: 1)
-    private let button = PillButton("Mark watched", image: "checkmark")
+    private let ticket = TicketButton()
+    private var shownID = 0
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         still.maxAngle = 0.08
         still.cornerRadius = 18
-        button.addAction(UIAction { [weak self] _ in
-            guard let self else { return }
-            PunchButton.chips(in: button.layer, at: CGPoint(x: button.bounds.midX, y: button.bounds.midY), color: Theme.accent)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { self.onWatched?() }
-        }, for: .primaryActionTriggered)
+        // Tear the stub off to mark it watched; the stub flies up and out of frame.
+        ticket.onStash = { [weak self] in
+            guard let self, let window else { return }
+            let target = CGPoint(x: window.bounds.maxX - 40, y: -60)
+            ticket.tear(to: target) { [weak self] in self?.onWatched?() }
+        }
         let text = UIStackView(arrangedSubviews: [code, show, episode])
         text.axis = .vertical
         text.spacing = 4
-        let stack = UIStackView(arrangedSubviews: [still, text, button])
+        let stack = UIStackView(arrangedSubviews: [still, text, ticket])
         stack.axis = .vertical
         stack.spacing = 18
         stack.setCustomSpacing(20, after: text)
@@ -306,7 +307,19 @@ final class UpNextCell: UICollectionViewCell {
         code.setCaps(bits.joined(separator: "  ·  "), kern: 1.2)
         show.setDisplay(item.show.name.uppercased())
         episode.text = item.episode.name
-        button.accessibilityLabel = "Mark \(item.show.name) season \(item.episode.seasonNumber) episode \(item.episode.episodeNumber) watched"
+        ticket.setTint(Theme.accent)
+        code.textColor = Theme.accent
+        let id = item.show.id
+        shownID = id
+        if let url = TMDB.imageURL(item.show.posterPath, .poster) {
+            Task { [weak self] in
+                guard let tint = await ImageLoader.shared.tint(for: url), let self, shownID == id else { return }
+                ticket.setTint(tint)
+                code.textColor = tint
+            }
+        }
+        ticket.configure(label: "Mark watched", symbol: "checkmark",
+                         accessibility: "Mark \(item.show.name) season \(item.episode.seasonNumber) episode \(item.episode.episodeNumber) watched")
     }
 }
 
