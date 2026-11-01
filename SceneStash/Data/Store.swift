@@ -95,6 +95,10 @@ final class Marathon: NSManagedObject {
     }
 }
 
+extension Notification.Name {
+    static let syncChanged = Notification.Name("syncChanged")
+}
+
 /// The user's library. Core Data mirrored to iCloud; views observe
 /// `NSManagedObjectContextObjectsDidChange` on `context` to refresh.
 final class Store {
@@ -118,7 +122,18 @@ final class Store {
         }
         context.automaticallyMergesChangesFromParent = true
         context.mergePolicy = NSMergePolicy.mergeByPropertyObjectTrump
+        NotificationCenter.default.addObserver(forName: NSPersistentCloudKitContainer.eventChangedNotification, object: container, queue: .main) { note in
+            guard let event = note.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey] as? NSPersistentCloudKitContainer.Event,
+                  let ended = event.endDate else { return }
+            MainActor.assumeIsolated {
+                Store.shared.lastSync = (ended, event.error?.localizedDescription)
+                NotificationCenter.default.post(name: .syncChanged, object: nil)
+            }
+        }
     }
+
+    /// The latest finished sync with iCloud and its error, if it failed. Shown in Settings.
+    private(set) var lastSync: (date: Date, error: String?)?
 
     // MARK: Reading
 
@@ -278,7 +293,7 @@ final class Store {
     // MARK: Model
 
     /// Built in code so there's no .xcdatamodeld to keep in sync. CloudKit needs every
-    /// attribute optional or defaulted, and no unique constraints.
+    /// attribute optional or defaulted, and no unique constraints. Keep CloudKit/schema.ckdb in step with it.
     private static let model: NSManagedObjectModel = {
         func attr(_ name: String, _ type: NSAttributeType, _ defaultValue: Any? = nil) -> NSAttributeDescription {
             let a = NSAttributeDescription()
