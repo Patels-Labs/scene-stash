@@ -305,7 +305,7 @@ private struct Status: View {
         } else {
             let end = attributes.end(state)
             if end > .now {
-                Text("Ends \(end.formatted(date: .omitted, time: .shortened)) · ") + Text(timerInterval: Date.now...end, countsDown: true) + Text(" left")
+                Text("Ends \(end.formatted(date: .omitted, time: .shortened)) · \(Text(timerInterval: Date.now...end, countsDown: true)) left")
             } else {
                 Text("Credits rolling")
             }
