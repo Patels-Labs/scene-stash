@@ -13,7 +13,7 @@ final class Pass {
     /// Off: everything is free and StoreKit is never touched. Turning it back on needs a TMDB commercial licence,
     /// since TMDB's free API terms are for non-commercial apps only.
     static let selling = false
-    static let privacyURL = URL(string: "https://github.com/patelheet30/scene-stash/blob/main/docs/privacy.md")!
+    static let privacyURL = URL(string: "https://patelheet30.github.io/scene-stash-pages/privacy")!
     static let termsURL = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!
 
     private(set) var yearly: Product?
