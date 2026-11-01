@@ -17,6 +17,12 @@ final class PaywallViewController: UIViewController {
         ("Premiere alerts & icons", "A nudge the night a new episode lands, and a box of alternate ticket icons."),
     ]
 
+    init() {
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .fullScreen
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = Theme.bg
@@ -193,7 +199,7 @@ final class PaywallViewController: UIViewController {
             primary.configuration?.title = "Done"
         } else if let trial = pass.trialLength {
             note.text = "Free for \(trial), then \(pass.price) a year. Renews automatically; cancel anytime in Settings, at least a day before the trial ends."
-            primary.configuration?.title = "Start \(trial) free"
+            primary.configuration?.title = "Try \(trial) free"
         } else {
             note.text = "\(pass.price) a year. Renews automatically; cancel anytime in Settings."
             primary.configuration?.title = "Subscribe · \(pass.price) a year"
@@ -266,7 +272,7 @@ final class PaywallViewController: UIViewController {
             let stubW = size.width - stubX
             draw("PER YEAR", small, at: CGPoint(x: stubX, y: 110), kern: 3, centeredIn: stubW)
             draw(price, .systemFont(ofSize: 72, weight: .black, width: .compressed), at: CGPoint(x: stubX, y: 136), centeredIn: stubW)
-            draw("ALL ACCESS", small, at: CGPoint(x: stubX, y: 226), kern: 3, centeredIn: stubW)
+            draw("PASS", small, at: CGPoint(x: stubX, y: 226), kern: 3, centeredIn: stubW)
         }
     }
 }
