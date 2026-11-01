@@ -201,18 +201,10 @@ private struct PunchCardView: View {
 
     var body: some View {
         if !snapshot.unlocked { Locked() } else if let card = snapshot.card {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 Caps(text: "Punch card · S\(card.season)", color: teal)
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 5), spacing: 4) {
-                    ForEach(Array(card.holes.prefix(20).enumerated()), id: \.offset) { _, hole in
-                        Circle()
-                            .fill(hole == 1 ? Color.black : hole == 2 ? Color.clear : Color(hex: "22343A"))
-                            .overlay(Circle().strokeBorder(hole == 2 ? teal : hole == 1 ? teal.opacity(0.4) : .clear, lineWidth: hole == 2 ? 2 : 1))
-                            .aspectRatio(1, contentMode: .fit)
-                    }
-                }
-                Spacer(minLength: 0)
-                Text(card.name.uppercased()).font(.display(20)).foregroundStyle(.white).lineLimit(1)
+                holes(card.holes)
+                Text(card.name.uppercased()).font(.display(18)).foregroundStyle(.white).lineLimit(1).minimumScaleFactor(0.6)
                 Caps(text: card.left == 0 ? "Caught up" : "\(card.left) left", size: 7)
             }
         } else {
@@ -221,6 +213,25 @@ private struct PunchCardView: View {
                 Text("START A\nSHOW").font(.display(26)).foregroundStyle(.white)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        }
+    }
+
+    /// Three rows of seven, sized to the space left. Longer seasons show the rows around the next episode.
+    private func holes(_ all: [Int]) -> some View {
+        let (cols, rows, gap): (Int, Int, CGFloat) = (7, 3, 4)
+        let next = all.firstIndex(of: 2) ?? 0
+        let start = max(0, min((next / cols - 1) * cols, (all.count - cols * rows + cols - 1) / cols * cols))
+        let shown = Array(all.dropFirst(start).prefix(cols * rows))
+        return GeometryReader { geo in
+            let d = min((geo.size.width - gap * CGFloat(cols - 1)) / CGFloat(cols), (geo.size.height - gap * CGFloat(rows - 1)) / CGFloat(rows))
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(d), spacing: gap), count: cols), alignment: .leading, spacing: gap) {
+                ForEach(Array(shown.enumerated()), id: \.offset) { _, hole in
+                    Circle()
+                        .fill(hole == 1 ? Color.black : hole == 2 ? Color.clear : Color(hex: "22343A"))
+                        .overlay(Circle().strokeBorder(hole == 2 ? teal : hole == 1 ? teal.opacity(0.4) : .clear, lineWidth: hole == 2 ? 2 : 1))
+                        .frame(width: d, height: d)
+                }
+            }
         }
     }
 }

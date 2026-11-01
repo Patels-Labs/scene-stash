@@ -456,13 +456,13 @@ final class ProgrammeCell: UICollectionViewCell {
     private let image = UIImageView()
     private let shade = CAGradientLayer()
     private let code = UILabel.make(Theme.label(.caption2, weight: .bold), UIColor(white: 1, alpha: 0.85))
-    private let corner = UILabel.make(Theme.label(.caption2, weight: .bold), UIColor(white: 1, alpha: 0.85))
-    private let name = UILabel.make(Theme.display(40, weight: .black), Theme.text, lines: 2)
+    private let name = UILabel.make(Theme.display(40, weight: .black), Theme.text, lines: 0)
     private let sub = UILabel.make(Theme.text(.footnote), UIColor(white: 1, alpha: 0.82))
     private let strip = FilmStripView()
     private let stub = StubView()
     private let dashed = CAShapeLayer()
     private var height: NSLayoutConstraint!
+    private var freeHeight: NSLayoutConstraint!
     private var shownID = 0
 
     override init(frame: CGRect) {
@@ -490,11 +490,14 @@ final class ProgrammeCell: UICollectionViewCell {
         textStack.axis = .vertical
         textStack.spacing = 2
         textStack.setCustomSpacing(10, after: sub)
-        [image, code, corner, textStack, stub].forEach { card.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        [image, code, textStack, stub].forEach { card.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
         card.layer.insertSublayer(shade, above: image.layer)
         [time, card].forEach { contentView.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
-        height = card.heightAnchor.constraint(equalToConstant: 120)
+        // A minimum, so long titles grow the card instead of being clipped.
+        height = card.heightAnchor.constraint(greaterThanOrEqualToConstant: 120)
         height.priority = .init(999)
+        freeHeight = card.heightAnchor.constraint(equalToConstant: 52)
+        freeHeight.priority = .init(999)
         let content = card.layoutMarginsGuide
         card.directionalLayoutMargins = .init(top: 14, leading: 14, bottom: 14, trailing: 14)
         NSLayoutConstraint.activate([
@@ -516,14 +519,15 @@ final class ProgrammeCell: UICollectionViewCell {
             stub.widthAnchor.constraint(equalToConstant: 52),
             code.topAnchor.constraint(equalTo: content.topAnchor),
             code.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            corner.firstBaselineAnchor.constraint(equalTo: code.firstBaselineAnchor),
-            corner.trailingAnchor.constraint(equalTo: stub.leadingAnchor, constant: -12),
+            code.trailingAnchor.constraint(lessThanOrEqualTo: stub.leadingAnchor, constant: -12),
             textStack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             textStack.trailingAnchor.constraint(equalTo: stub.leadingAnchor, constant: -12),
             textStack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
             textStack.topAnchor.constraint(greaterThanOrEqualTo: code.bottomAnchor, constant: 6),
             strip.heightAnchor.constraint(equalToConstant: 22),
         ])
+        // The backdrop and stub fill whatever height the text needs; they never set it.
+        [image, stub].forEach { $0.setContentCompressionResistancePriority(.init(1), for: .vertical) }
         stub.onTorn = { [weak self] in self?.onTorn?() }
         isAccessibilityElement = true
         accessibilityTraits = .button
@@ -541,13 +545,13 @@ final class ProgrammeCell: UICollectionViewCell {
         let isFree: Bool = { switch slot { case .free, .intermission: true; default: false } }()
         // Cards are as tall as they run, within reason.
         height.constant = isFree ? 52 : min(max(CGFloat(slot.minutes) * 2.4, 124), 240)
+        freeHeight.isActive = isFree
         card.directionalLayoutMargins.top = isFree ? 19 : 14
         [image, code, name, sub, stub].forEach { $0.isHidden = isFree }
         dashed.isHidden = !isFree
         card.backgroundColor = isFree ? .clear : Theme.surfaceHigh
         shade.isHidden = isFree
         strip.isHidden = true
-        corner.isHidden = true
         name.font = Theme.display(height.constant < 150 ? 32 : 42, weight: .black)
 
         switch slot {
@@ -560,9 +564,7 @@ final class ProgrammeCell: UICollectionViewCell {
             accessibilityLabel = "\(u.show.name), season \(u.episode.seasonNumber) episode \(u.episode.episodeNumber), \(u.episode.name)"
         case .film(let f):
             let left = max(f.runtime - f.position / 60, 0)
-            code.setCaps("Film · \(left) min left", kern: 1.2)
-            corner.setCaps("Resume \(Self.clock(f.position))", kern: 1.2)
-            corner.isHidden = false
+            code.setCaps(f.position >= 60 ? "Film · \(left) min left · from \(Self.clock(f.position))" : "Film · \(DateText.runtime(f.runtime))", kern: 1.2)
             name.setDisplay(f.title.name.uppercased())
             sub.text = nil
             strip.isHidden = false
