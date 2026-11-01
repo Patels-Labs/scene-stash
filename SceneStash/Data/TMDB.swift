@@ -113,6 +113,8 @@ nonisolated struct TitleDetail: Decodable, Sendable {
     let lastEpisodeToAir: Episode?
     let nextEpisodeToAir: Episode?
     let cast: [CastMember]
+    /// Poster-style credits: director, top billing, music and photography, in one run-on line.
+    let billing: [(role: String?, name: String)]
     let trailerURL: URL?
     let providers: [String: RegionProviders]
     let recommendations: [Title]
@@ -125,10 +127,11 @@ nonisolated struct TitleDetail: Decodable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, title, name, tagline, overview, posterPath, backdropPath, releaseDate, firstAirDate
         case runtime, episodeRunTime, genres, voteAverage, status, seasons, lastEpisodeToAir, nextEpisodeToAir
-        case credits, videos, recommendations
+        case credits, videos, recommendations, createdBy
         case watchProviders = "watch/providers"
     }
-    private struct Credits: Decodable { let cast: [CastMember] }
+    private struct Crew: Decodable { let name: String; let job: String? }
+    private struct Credits: Decodable { let cast: [CastMember]; let crew: [Crew]? }
     private struct Providers: Decodable { let results: [String: RegionProviders] }
 
     init(from decoder: Decoder) throws {
@@ -150,7 +153,21 @@ nonisolated struct TitleDetail: Decodable, Sendable {
         seasons = try c.decodeIfPresent([SeasonSummary].self, forKey: .seasons) ?? []
         lastEpisodeToAir = try c.decodeIfPresent(Episode.self, forKey: .lastEpisodeToAir)
         nextEpisodeToAir = try c.decodeIfPresent(Episode.self, forKey: .nextEpisodeToAir)
-        cast = try c.decodeIfPresent(Credits.self, forKey: .credits)?.cast ?? []
+        let credits = try c.decodeIfPresent(Credits.self, forKey: .credits)
+        cast = credits?.cast ?? []
+        let crew = credits?.crew ?? []
+        func people(_ job: String) -> String? {
+            let names = crew.filter { $0.job == job }.map(\.name).prefix(2)
+            return names.isEmpty ? nil : names.joined(separator: " & ")
+        }
+        let creators = (try? c.decodeIfPresent([Crew].self, forKey: .createdBy))?.map(\.name).prefix(2).joined(separator: " & ")
+        var bill: [(String?, String)] = []
+        if let d = people("Director") { bill.append(("Directed by", d)) } else if let creators, !creators.isEmpty { bill.append(("Created by", creators)) }
+        bill += cast.prefix(7).map { (nil, $0.name) }
+        if let m = people("Original Music Composer") { bill.append(("Music by", m)) }
+        if let p = people("Director of Photography") { bill.append(("Photography", p)) }
+        if let w = people("Screenplay") ?? people("Writer") { bill.append(("Written by", w)) }
+        billing = bill
         let videos = try c.decodeIfPresent(Page<Video>.self, forKey: .videos)?.results ?? []
         trailerURL = (videos.first { $0.site == "YouTube" && $0.type == "Trailer" } ?? videos.first { $0.site == "YouTube" })
             .flatMap { URL(string: "https://www.youtube.com/watch?v=\($0.key)") }

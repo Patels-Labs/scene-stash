@@ -319,8 +319,12 @@ final class StashCardCell: UICollectionViewCell {
                 meta.textColor = Theme.secondary
             }
         case .watching:
-            let eps = Store.shared.episodes(show: title.id)
-            meta.setCaps(eps.map(\.key).max().map { "Last seen \($0.label)" } ?? "Not started")
+            if title.mediaType == .movie, let t = tracked, t.position > 0 {
+                meta.setCaps("\(max(Int(t.runtime) - Int(t.position) / 60, 0)) min left")
+            } else {
+                let eps = Store.shared.episodes(show: title.id)
+                meta.setCaps(eps.map(\.key).max().map { "Last seen \($0.label)" } ?? "Not started")
+            }
             meta.textColor = Theme.secondary
         case .seen:
             meta.setCaps(tracked?.watchedAt.map { "Seen " + $0.formatted(.dateTime.month(.abbreviated).year()) })

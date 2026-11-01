@@ -2,10 +2,10 @@ import UIKit
 
 /// A title as an object: the poster card floats centre stage under its own light, with everything else below.
 final class DetailViewController: UIViewController, UICollectionViewDelegate {
-    nonisolated private enum Section: Hashable { case hero, overview, providers, cast, seasons, episodes, more }
+    nonisolated private enum Section: Hashable { case hero, progress, punchCard, episodes, overview, providers, cast, more }
     nonisolated private enum Item: Hashable {
-        case hero, overview
-        case provider(Provider), cast(CastMember), season(Int), episode(Episode), title(Title)
+        case hero, overview, progress, punchCard
+        case provider(Provider), cast(CastMember), episode(Episode), title(Title)
     }
 
     private let item: Title
@@ -26,6 +26,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
     private let kicker = UILabel.make(Theme.label(), Theme.secondary)
     private let titleLabel = UILabel.make(Theme.display(50, weight: .black), Theme.text, lines: 0)
     private let meta = UILabel.make(Theme.label(), Theme.tertiary, lines: 0)
+    private let billing = UILabel.make(Theme.display(12, weight: .medium, relativeTo: .caption2), Theme.secondary, lines: 0)
     private let tagline = UILabel.make(Theme.text(.callout), Theme.secondary, lines: 0)
     private let nextUp = UILabel.make(Theme.label(.caption1, weight: .bold), Theme.accent, lines: 0)
     private let ticket = TicketButton()
@@ -132,7 +133,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         poster.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([poster.widthAnchor.constraint(equalToConstant: 196), poster.heightAnchor.constraint(equalToConstant: 294)])
 
-        [kicker, titleLabel, meta, tagline, nextUp].forEach { $0.textAlignment = .center }
+        [kicker, titleLabel, meta, billing, tagline, nextUp].forEach { $0.textAlignment = .center }
         titleLabel.accessibilityTraits = .header
         titleLabel.adjustsFontSizeToFitWidth = true
         titleLabel.minimumScaleFactor = 0.6
@@ -169,9 +170,10 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         let posterRow = UIStackView(arrangedSubviews: [poster])
         posterRow.axis = .vertical
         posterRow.alignment = .center
-        let titles = UIStackView(arrangedSubviews: [kicker, titleLabel, meta])
+        let titles = UIStackView(arrangedSubviews: [kicker, titleLabel, meta, billing])
         titles.axis = .vertical
         titles.spacing = 6
+        titles.setCustomSpacing(14, after: meta)
         let trailerRow = UIStackView(arrangedSubviews: [trailerButton])
         trailerRow.axis = .vertical
         trailerRow.alignment = .center
@@ -198,6 +200,8 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         if let seasons = d?.mainSeasons.count, item.mediaType == .tv, seasons > 0 { bits.append("\(seasons) season\(seasons == 1 ? "" : "s")") }
         if let vote = d?.voteAverage ?? item.voteAverage, vote > 0 { bits.append("TMDB " + vote.formatted(.number.precision(.fractionLength(1)))) }
         meta.setCaps(bits.joined(separator: "  ·  "), kern: 1)
+        billing.attributedText = d.map { Self.billingText($0.billing) }
+        billing.isHidden = d?.billing.isEmpty ?? true
         tagline.text = d?.tagline.map { "“\($0)”" }
         tagline.isHidden = d?.tagline == nil
 
@@ -222,6 +226,21 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             nextUp.setCaps(nil)
         }
         nextUp.isHidden = nextUp.attributedText == nil
+    }
+
+    /// The credits block from the bottom of a poster: roles small, names bright, all one tight run.
+    private static func billingText(_ entries: [(role: String?, name: String)]) -> NSAttributedString {
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        style.lineHeightMultiple = 1.05
+        let out = NSMutableAttributedString()
+        for (i, e) in entries.enumerated() {
+            if i > 0 { out.append(NSAttributedString(string: "  ", attributes: [:])) }
+            if let role = e.role { out.append(NSAttributedString(string: role.uppercased() + " ", attributes: [.foregroundColor: Theme.tertiary])) }
+            out.append(NSAttributedString(string: e.name.uppercased(), attributes: [.foregroundColor: e.role == nil ? Theme.secondary : Theme.text]))
+        }
+        out.addAttributes([.paragraphStyle: style, .kern: 0.6], range: NSRange(location: 0, length: out.length))
+        return out
     }
 
     private func statusMenu() -> UIMenu {
@@ -319,6 +338,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             }
         }
         refreshHero()
+        applySnapshot()
         reconfigureAll()
     }
 
@@ -347,16 +367,13 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
                 s = list(spacing: 0)
                 s.contentInsets = .init(top: 20, leading: 0, bottom: 30, trailing: 0)
                 return s
-            case .overview: s = list(spacing: 0)
-            case .providers: s = row(width: .absolute(76), height: 102, spacing: 8)
-            case .cast: s = row(width: .absolute(90), height: 148, spacing: 8)
-            case .seasons: s = row(width: .estimated(80), height: 36, spacing: 8)
-            case .episodes: s = list(spacing: 18)
+            case .overview, .progress, .punchCard, .cast, .episodes: s = list(spacing: 0)
+            case .providers: s = row(width: .estimated(150), height: 68, spacing: 10)
             case .more: s = row(width: .absolute(112), height: 168, spacing: 10)
             }
             s.contentInsets = .init(top: 12, leading: 22, bottom: 38, trailing: 22)
-            if section == .seasons { s.contentInsets.bottom = 8 }
-            if section != .overview && section != .seasons { s.boundarySupplementaryItems = [Layouts.headerItem()] }
+            if section == .progress || section == .punchCard { s.contentInsets = .init(top: 0, leading: 16, bottom: 34, trailing: 16) }
+            if ![.overview, .progress, .punchCard].contains(section) { s.boundarySupplementaryItems = [Layouts.headerItem()] }
             return s
         }
     }
@@ -368,23 +385,47 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             cell.label.numberOfLines = overviewExpanded ? 0 : 5
             cell.accessibilityHint = overviewExpanded ? nil : "Double tap to read more"
         }
-        let providerReg = UICollectionView.CellRegistration<ProviderCell, Item> { [unowned self] cell, _, item in
+        let providerReg = UICollectionView.CellRegistration<ProviderTicketCell, Item> { [unowned self] cell, _, item in
             if case .provider(let p) = item { cell.configure(p, mine: Prefs.services.contains(p.providerId), accent: accent) }
         }
-        let castReg = UICollectionView.CellRegistration<CastCell, Item> { cell, _, item in
+        let castReg = UICollectionView.CellRegistration<CompanyCell, Item> { cell, _, item in
             if case .cast(let c) = item { cell.configure(c) }
         }
-        let chipReg = UICollectionView.CellRegistration<ChipCell, Item> { [unowned self] cell, _, item in
-            guard case .season(let n) = item else { return }
-            let count = seasonMap[n] ?? 0
-            let done = watched.filter { $0.season == n }.count
-            cell.accent = accent
-            cell.configure("Season \(n)", selected: n == selectedSeason, progress: done > 0 ? "\(done)/\(count)" : nil)
+        let progressReg = UICollectionView.CellRegistration<FilmProgressCell, Item> { [unowned self] cell, _, _ in
+            let runtime = detail?.runtime ?? 0
+            let title = detail?.title ?? item
+            cell.configure(position: Int(Store.shared.tracked(item.id, item.mediaType)?.position ?? 0), runtime: runtime, accent: accent)
+            cell.onCommit = { Store.shared.setPosition($0, for: title, runtime: runtime) }
+            cell.onFinished = {
+                Store.shared.track(title, status: .seen, runtime: runtime)
+                Haptics.success()
+            }
+        }
+        let punchReg = UICollectionView.CellRegistration<PunchCardCell, Item> { [unowned self] cell, _, _ in
+            let card = cell.card
+            card.rows = (detail?.mainSeasons ?? []).map { .init(season: $0.seasonNumber, count: $0.episodeCount) }
+            card.watched = watched
+            card.aired = airedKey
+            card.upNext = Progress.nextUp(seasons: seasonMap, watched: watched, aired: airedKey)
+            card.selected = selectedSeason
+            card.onSelect = { [weak self] n in
+                guard let self else { return }
+                selectedSeason = n
+                reconfigureAll()
+                loadSeason(n)
+            }
+            let remaining = Progress.remaining(seasons: seasonMap, watched: watched, aired: airedKey)
+            let aired = seasonMap.reduce(0) { total, season in
+                guard let a = airedKey else { return total + season.value }
+                return total + (season.key < a.season ? season.value : season.key == a.season ? a.episode : 0)
+            }
+            cell.configure(remaining: remaining, minutes: remaining * (detail?.runtime ?? 45), punched: watched.count, total: aired, accent: accent)
         }
         let episodeReg = UICollectionView.CellRegistration<EpisodeCell, Item> { [unowned self] cell, _, item in
             guard case .episode(let e) = item else { return }
             let key = EpisodeKey(season: e.seasonNumber, episode: e.episodeNumber)
-            cell.configure(e, watched: watched.contains(key), aired: DateText.isPast(e.airDate), accent: accent)
+            let next = Progress.nextUp(seasons: seasonMap, watched: watched, aired: airedKey)
+            cell.configure(e, watched: watched.contains(key), aired: DateText.isPast(e.airDate), next: key == next, accent: accent)
             cell.onPunch = { [weak self] in self?.punch(e) }
         }
         let posterReg = UICollectionView.CellRegistration<PosterCell, Item> { cell, _, item in
@@ -393,7 +434,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         let headerReg = UICollectionView.SupplementaryRegistration<SectionHeader>(elementKind: SectionHeader.kind) { [unowned self] header, _, indexPath in
             switch dataSource.sectionIdentifier(for: indexPath.section) {
             case .providers: header.configure("Where to watch", caption: "Streaming in \(Prefs.region) · JustWatch")
-            case .cast: header.configure("Cast")
+            case .cast: header.configure("The company", caption: "Starring")
             case .episodes:
                 let all = (seasonEpisodes[selectedSeason ?? 0] ?? []).filter { DateText.isPast($0.airDate) }
                     .allSatisfy { watched.contains(EpisodeKey(season: $0.seasonNumber, episode: $0.episodeNumber)) }
@@ -410,7 +451,8 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             case .overview: cv.dequeueConfiguredReusableCell(using: textReg, for: indexPath, item: item)
             case .provider: cv.dequeueConfiguredReusableCell(using: providerReg, for: indexPath, item: item)
             case .cast: cv.dequeueConfiguredReusableCell(using: castReg, for: indexPath, item: item)
-            case .season: cv.dequeueConfiguredReusableCell(using: chipReg, for: indexPath, item: item)
+            case .progress: cv.dequeueConfiguredReusableCell(using: progressReg, for: indexPath, item: item)
+            case .punchCard: cv.dequeueConfiguredReusableCell(using: punchReg, for: indexPath, item: item)
             case .episode: cv.dequeueConfiguredReusableCell(using: episodeReg, for: indexPath, item: item)
             case .title: cv.dequeueConfiguredReusableCell(using: posterReg, for: indexPath, item: item)
             }
@@ -424,6 +466,16 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         var snap = NSDiffableDataSourceSnapshot<Section, Item>()
         snap.appendSections([.hero])
         snap.appendItems([.hero])
+        let status = Store.shared.tracked(item.id, item.mediaType)?.status
+        if item.mediaType == .movie, (detail?.runtime ?? 0) > 0, status != .seen {
+            snap.appendSections([.progress]); snap.appendItems([.progress])
+        }
+        if let seasons = detail?.mainSeasons, !seasons.isEmpty {
+            snap.appendSections([.punchCard]); snap.appendItems([.punchCard])
+            if let n = selectedSeason, let episodes = seasonEpisodes[n] {
+                snap.appendSections([.episodes]); snap.appendItems(episodes.map(Item.episode))
+            }
+        }
         if !(detail?.overview ?? item.overview).isEmpty {
             snap.appendSections([.overview]); snap.appendItems([.overview])
         }
@@ -432,14 +484,8 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             snap.appendSections([.providers])
             snap.appendItems(flat.sorted { mine.contains($0.providerId) && !mine.contains($1.providerId) }.map(Item.provider))
         }
-        if let cast = detail?.cast.prefix(15), !cast.isEmpty {
+        if let cast = detail?.cast.prefix(8), !cast.isEmpty {
             snap.appendSections([.cast]); snap.appendItems(cast.map(Item.cast))
-        }
-        if let seasons = detail?.mainSeasons, !seasons.isEmpty {
-            snap.appendSections([.seasons]); snap.appendItems(seasons.map { .season($0.seasonNumber) })
-            if let n = selectedSeason, let episodes = seasonEpisodes[n] {
-                snap.appendSections([.episodes]); snap.appendItems(episodes.map(Item.episode))
-            }
         }
         if let more = detail?.recommendations.filter({ $0.posterPath != nil }).prefix(12), !more.isEmpty {
             snap.appendSections([.more]); snap.appendItems(more.map(Item.title))
@@ -462,11 +508,6 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             var snap = dataSource.snapshot()
             snap.reconfigureItems([.overview])
             dataSource.apply(snap, animatingDifferences: true)
-        case .season(let n):
-            Haptics.tap()
-            selectedSeason = n
-            reconfigureAll()
-            loadSeason(n)
         case .provider:
             if let link = detail?.providers[Prefs.region]?.link, let url = URL(string: link) { UIApplication.shared.open(url) }
         case .title(let t):
