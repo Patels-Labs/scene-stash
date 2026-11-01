@@ -1,11 +1,11 @@
 import Foundation
 
-nonisolated enum MediaType: String, Codable, Hashable {
+nonisolated enum MediaType: String, Codable, Hashable, Sendable {
     case movie, tv, person
 }
 
 /// A movie or show as it appears in lists, search and trending.
-nonisolated struct Title: Decodable, Hashable {
+nonisolated struct Title: Decodable, Hashable, Sendable {
     let id: Int
     let mediaType: MediaType
     let name: String
@@ -43,11 +43,11 @@ nonisolated struct Title: Decodable, Hashable {
     }
 }
 
-nonisolated struct Page<T: Decodable>: Decodable { let results: [T] }
+nonisolated struct Page<T: Decodable & Sendable>: Decodable, Sendable { let results: [T] }
 
-nonisolated struct Genre: Decodable, Hashable { let id: Int; let name: String }
+nonisolated struct Genre: Decodable, Hashable, Sendable { let id: Int; let name: String }
 
-nonisolated struct SeasonSummary: Decodable, Hashable {
+nonisolated struct SeasonSummary: Decodable, Hashable, Sendable {
     let seasonNumber: Int
     let episodeCount: Int
     let name: String
@@ -55,7 +55,7 @@ nonisolated struct SeasonSummary: Decodable, Hashable {
     let airDate: String?
 }
 
-nonisolated struct Episode: Decodable, Hashable {
+nonisolated struct Episode: Decodable, Hashable, Sendable {
     let id: Int
     let seasonNumber: Int
     let episodeNumber: Int
@@ -66,37 +66,37 @@ nonisolated struct Episode: Decodable, Hashable {
     let runtime: Int?
 }
 
-nonisolated struct Season: Decodable { let episodes: [Episode] }
+nonisolated struct Season: Decodable, Sendable { let episodes: [Episode] }
 
-nonisolated struct CastMember: Decodable, Hashable {
+nonisolated struct CastMember: Decodable, Hashable, Sendable {
     let id: Int
     let name: String
     let character: String?
     let profilePath: String?
 }
 
-nonisolated struct Video: Decodable { let key: String; let site: String; let type: String }
+nonisolated struct Video: Decodable, Sendable { let key: String; let site: String; let type: String }
 
-nonisolated struct Provider: Decodable, Hashable {
+nonisolated struct Provider: Decodable, Hashable, Sendable {
     let providerId: Int
     let providerName: String
     let logoPath: String?
     let displayPriority: Int?
 }
 
-nonisolated struct RegionProviders: Decodable {
+nonisolated struct RegionProviders: Decodable, Sendable {
     let link: String?
     let flatrate: [Provider]?
     let rent: [Provider]?
     let buy: [Provider]?
 }
 
-nonisolated struct Region: Decodable, Hashable {
+nonisolated struct Region: Decodable, Hashable, Sendable {
     let iso31661: String
     let englishName: String
 }
 
-nonisolated struct TitleDetail: Decodable {
+nonisolated struct TitleDetail: Decodable, Sendable {
     let id: Int
     let mediaType: MediaType
     let name: String

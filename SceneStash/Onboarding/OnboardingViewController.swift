@@ -265,6 +265,8 @@ private final class PickerView: UIView {
     private var animator: UIDynamicAnimator?
     private let collision = UICollisionBehavior()
     private let noise = UIFieldBehavior.noiseField(smoothness: 0.95, animationSpeed: 0.35)
+    /// Weak pull toward the middle so posters pile loosely instead of sticking to the edges.
+    private let spring = UIFieldBehavior.springField()
     private let body = UIDynamicItemBehavior()
     private var posters: [UIButton: Title] = [:]
     private var picked: [Title] = []
@@ -334,6 +336,8 @@ private final class PickerView: UIView {
         let still = UIAccessibility.isReduceMotionEnabled || UIAccessibility.isVoiceOverRunning
         let size = CGSize(width: 78, height: 117)
         let columns = max(Int(field.bounds.width / (size.width + 14)), 1)
+        let rows = (titles.count + columns - 1) / columns
+        let rowStep = (field.bounds.height - size.height - 12) / CGFloat(max(rows - 1, 1))
 
         for (i, title) in titles.enumerated() {
             let poster = UIButton(type: .custom)
@@ -354,8 +358,9 @@ private final class PickerView: UIView {
             }, for: .primaryActionTriggered)
             let col = i % columns, row = i / columns
             let gridX = (CGFloat(col) + 0.5) * field.bounds.width / CGFloat(columns)
-            let gridY = CGFloat(row) * (size.height * 0.62) + size.height / 2 + 6
-            poster.center = CGPoint(x: gridX, y: min(gridY, field.bounds.height - size.height / 2))
+            // Staggered rows so the posters read as a scattered pile rather than a grid.
+            let gridY = CGFloat(row) * rowStep + size.height / 2 + 6
+            poster.center = CGPoint(x: gridX + (row % 2 == 0 ? -8 : 8), y: gridY)
             if !still { poster.transform = CGAffineTransform(rotationAngle: .random(in: -0.15...0.15)) }
             poster.alpha = 0
             field.addSubview(poster)
@@ -369,11 +374,14 @@ private final class PickerView: UIView {
         noise.strength = 0.6
         noise.region = UIRegion(size: field.bounds.size)
         noise.position = CGPoint(x: field.bounds.midX, y: field.bounds.midY)
+        spring.strength = 0.12
+        spring.region = noise.region
+        spring.position = noise.position
         body.resistance = 1.2
         body.angularResistance = 4
         body.elasticity = 0.3
-        posters.keys.forEach { collision.addItem($0); noise.addItem($0); body.addItem($0) }
-        [collision, noise, body].forEach(animator.addBehavior)
+        posters.keys.forEach { collision.addItem($0); noise.addItem($0); spring.addItem($0); body.addItem($0) }
+        [collision, noise, spring, body].forEach(animator.addBehavior)
         self.animator = animator
     }
 
@@ -381,6 +389,7 @@ private final class PickerView: UIView {
         guard let title = posters.removeValue(forKey: poster) else { return }
         collision.removeItem(poster)
         noise.removeItem(poster)
+        spring.removeItem(poster)
         body.removeItem(poster)
         poster.isUserInteractionEnabled = false
         picked.append(title)
@@ -388,11 +397,11 @@ private final class PickerView: UIView {
 
         // Drop it into the tray, fanned with the others like stubs in a box.
         let slot = picked.count - 1
-        let target = tray.convert(CGPoint(x: 40 + CGFloat(slot % 12) * 24, y: 58), to: field)
+        let target = tray.convert(CGPoint(x: 38 + CGFloat(slot % 12) * 26, y: 60), to: field)
         let reduce = UIAccessibility.isReduceMotionEnabled
         UIView.animate(withDuration: reduce ? 0.2 : 0.55, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0.4) {
             poster.center = target
-            poster.transform = CGAffineTransform(scaleX: 0.42, y: 0.42).rotated(by: reduce ? 0 : CGFloat(slot % 2 == 0 ? -0.12 : 0.1))
+            poster.transform = CGAffineTransform(scaleX: 0.5, y: 0.5).rotated(by: reduce ? 0 : CGFloat(slot % 2 == 0 ? -0.12 : 0.1))
         } completion: { _ in
             Haptics.soft()
             self.field.bringSubviewToFront(poster)

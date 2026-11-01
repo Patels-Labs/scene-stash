@@ -59,6 +59,9 @@ final class WatchedEpisode: NSManagedObject {
 /// `NSManagedObjectContextObjectsDidChange` on `context` to refresh.
 final class Store {
     static let shared = Store()
+    /// Local previews (unsigned Catalyst builds) have no iCloud entitlement and CloudKit traps without one;
+    /// launch them with `-LocalStoreOnly YES`.
+    static let cloudEnabled = !UserDefaults.standard.bool(forKey: "LocalStoreOnly")
 
     let container: NSPersistentCloudKitContainer
     var context: NSManagedObjectContext { container.viewContext }
@@ -66,7 +69,7 @@ final class Store {
     private init() {
         container = NSPersistentCloudKitContainer(name: "SceneStash", managedObjectModel: Self.model)
         let description = container.persistentStoreDescriptions.first!
-        description.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(containerIdentifier: "iCloud.com.heetpatel.scenestash")
+        description.cloudKitContainerOptions = Self.cloudEnabled ? NSPersistentCloudKitContainerOptions(containerIdentifier: "iCloud.com.heetpatel.scenestash") : nil
         description.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
         description.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
         container.loadPersistentStores { _, error in

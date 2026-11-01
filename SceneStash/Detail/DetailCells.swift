@@ -168,7 +168,7 @@ final class EpisodeCell: UICollectionViewCell {
             still.widthAnchor.constraint(equalToConstant: 112),
             still.heightAnchor.constraint(equalToConstant: 63),
         ])
-        punch.addAction(UIAction { [weak self] _ in self?.onPunch?() }, for: .primaryActionTriggered)
+        punch.addAction(UIAction { [weak self] _ in self?.onPunch?() }, for: .touchUpInside)
     }
     required init?(coder: NSCoder) { fatalError() }
 

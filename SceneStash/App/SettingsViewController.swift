@@ -20,6 +20,7 @@ final class SettingsViewController: UITableViewController {
         navigationItem.rightBarButtonItem = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { [weak self] _ in self?.dismiss(animated: true) })
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "cell")
         Task {
+            guard Store.cloudEnabled else { icloudStatus = "Off in this build"; return }
             let status = try? await CKContainer(identifier: "iCloud.com.heetpatel.scenestash").accountStatus()
             icloudStatus = status == .available ? "On" : "Off — sign in to iCloud to sync"
             tableView.reloadData()

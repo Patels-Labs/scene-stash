@@ -277,7 +277,11 @@ final class UpNextCell: UICollectionViewCell {
         left.font = Theme.mono(.caption2, weight: .bold)
         left.textColor = Theme.amber
         [show, episode, left].forEach { $0.adjustsFontForContentSizeCategory = true }
-        punch.addAction(UIAction { [weak self] _ in self?.onPunch?() }, for: .primaryActionTriggered)
+        punch.addAction(UIAction { [weak self] _ in
+            // Let the punch land before the card flips to the next episode.
+            self?.punch.set(true, animated: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self?.onPunch?() }
+        }, for: .touchUpInside)
 
         let text = UIStackView(arrangedSubviews: [left, show, episode])
         text.axis = .vertical
