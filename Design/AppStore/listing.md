@@ -47,8 +47,6 @@ THE EXTRAS, ALL FREE
 PRIVATE BY DESIGN
 Free, with no accounts, no ads and no tracking. Your stash syncs through your own iCloud.
 
-Privacy Policy: https://github.com/patelheet30/scene-stash/blob/main/docs/privacy.md
-
 This product uses the TMDB API but is not endorsed or certified by TMDB. Streaming availability provided by JustWatch.
 
 ## Support URL
