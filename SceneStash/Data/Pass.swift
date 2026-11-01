@@ -79,6 +79,8 @@ final class Pass {
     enum Outcome { case unlocked, cancelled, pending }
 
     func subscribe() async throws -> Outcome {
+        // The launch fetch can fail (offline, or the product wasn't live yet), so try again before giving up.
+        if yearly == nil { yearly = try? await Product.products(for: [Self.yearlyID]).first }
         guard let yearly else { throw StoreKitError.notAvailableInStorefront }
         switch try await yearly.purchase() {
         case .success(let result):
