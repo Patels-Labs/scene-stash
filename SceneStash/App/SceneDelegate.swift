@@ -1,3 +1,4 @@
+import CloudKit
 import UIKit
 
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
@@ -11,16 +12,24 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         let tabs = UITabBarController(tabs: [
             UITab(title: "Tonight", image: UIImage(systemName: "popcorn"), identifier: "tonight") { _ in Self.nav(TonightViewController()) },
             UITab(title: "Stash", image: UIImage(systemName: "ticket"), identifier: "stash") { _ in Self.nav(StashViewController()) },
+            UITab(title: "Nights", image: UIImage(systemName: "person.2"), identifier: "nights") { _ in Self.nav(NightsViewController()) },
             UISearchTab { _ in Self.nav(DiscoverViewController()) },
         ])
         window.rootViewController = tabs
         window.makeKeyAndVisible()
         Task { await Store.shared.backfillRuntimes() }
         self.window = window
+        Task { await Store.shared.loadIdentity() }
+        if let metadata = connectionOptions.cloudKitShareMetadata { Store.shared.accept(metadata) }
         if !Prefs.onboarded {
             // Next runloop, once the tab controller is in the window hierarchy.
             DispatchQueue.main.async { tabs.present(OnboardingViewController(), animated: false) }
         }
+    }
+
+    /// Tapping a friend's movie-night link opens the app here.
+    func windowScene(_ windowScene: UIWindowScene, userDidAcceptCloudKitShareWith metadata: CKShare.Metadata) {
+        Store.shared.accept(metadata)
     }
 
     // Keep the film's saved place current with any Start now session.

@@ -39,6 +39,7 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UIUserInterfaceStyle: Dark
         NSSupportsLiveActivities: true
+        CKSharingSupported: true
         UIBackgroundModes: [remote-notification]
     settings:
       base:

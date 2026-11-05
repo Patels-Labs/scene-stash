@@ -80,6 +80,67 @@ DEFINE SCHEMA
         GRANT READ TO "_world"
     );
 
+    RECORD TYPE CD_MovieNight (
+        "___createTime"         TIMESTAMP,
+        "___createdBy"          REFERENCE,
+        "___etag"               STRING,
+        "___modTime"            TIMESTAMP,
+        "___modifiedBy"         REFERENCE,
+        "___recordID"           REFERENCE QUERYABLE,
+        CD_entityName           STRING,
+        CD_uuid                 STRING,
+        CD_uuid_ckAsset         ASSET,
+        CD_tmdbID               INT64,
+        CD_name                 STRING,
+        CD_name_ckAsset         ASSET,
+        CD_posterPath           STRING,
+        CD_posterPath_ckAsset   ASSET,
+        CD_backdropPath         STRING,
+        CD_backdropPath_ckAsset ASSET,
+        CD_runtime              INT64,
+        CD_showtime             TIMESTAMP,
+        CD_cinema               STRING,
+        CD_cinema_ckAsset       ASSET,
+        CD_address              STRING,
+        CD_address_ckAsset      ASSET,
+        CD_screen               STRING,
+        CD_screen_ckAsset       ASSET,
+        CD_seats                STRING,
+        CD_seats_ckAsset        ASSET,
+        CD_booked               INT64,
+        CD_bookedBy             STRING,
+        CD_bookedBy_ckAsset     ASSET,
+        CD_createdAt            TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_world"
+    );
+
+    RECORD TYPE CD_NightNote (
+        "___createTime"         TIMESTAMP,
+        "___createdBy"          REFERENCE,
+        "___etag"               STRING,
+        "___modTime"            TIMESTAMP,
+        "___modifiedBy"         REFERENCE,
+        "___recordID"           REFERENCE QUERYABLE,
+        CD_entityName           STRING,
+        CD_uuid                 STRING,
+        CD_uuid_ckAsset         ASSET,
+        CD_authorID             STRING,
+        CD_authorID_ckAsset     ASSET,
+        CD_authorName           STRING,
+        CD_authorName_ckAsset   ASSET,
+        CD_text                 STRING,
+        CD_text_ckAsset         ASSET,
+        CD_rating               INT64,
+        CD_createdAt            TIMESTAMP,
+        // The to-one relationship, stored as the night's record name.
+        CD_night                STRING,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_world"
+    );
+
     RECORD TYPE Users (
         "___createTime"         TIMESTAMP,
         "___createdBy"          REFERENCE,
