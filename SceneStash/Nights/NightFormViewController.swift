@@ -1,3 +1,4 @@
+import MapKit
 import UIKit
 
 /// Step one of planning a night: which film. Your watchlist first, or search for anything.
@@ -64,7 +65,7 @@ final class NightFilmPickerViewController: UITableViewController, UISearchResult
 }
 
 /// The ticket details: when, where, screen and seats, and whether anyone's booked yet.
-final class NightFormViewController: UIViewController {
+final class NightFormViewController: UIViewController, MKLocalSearchCompleterDelegate {
     private let film: Title
     private let night: MovieNight?
     private let onSave: (MovieNight) -> Void
@@ -76,6 +77,9 @@ final class NightFormViewController: UIViewController {
     private let screen = NightFormViewController.textField("1")
     private let seats = NightFormViewController.textField("H7–H10")
     private let booked = UISwitch()
+    /// Cinemas matching what's typed in Cinema; picking one fills in its address too.
+    private let completer = MKLocalSearchCompleter()
+    private let suggestions = UIStackView()
 
     init(title: Title, onSave: @escaping (MovieNight) -> Void) {
         film = title
@@ -129,6 +133,19 @@ final class NightFormViewController: UIViewController {
         tap.cancelsTouchesInView = false
         view.addGestureRecognizer(tap)
 
+        completer.delegate = self
+        completer.resultTypes = .pointOfInterest
+        completer.pointOfInterestFilter = MKPointOfInterestFilter(including: [.movieTheater])
+        cinema.addAction(UIAction { [weak self] _ in self?.searchCinemas() }, for: .editingChanged)
+        for field in [address, screen, seats] {
+            field.addAction(UIAction { [weak self] _ in self?.showSuggestions([]) }, for: .editingDidBegin)
+        }
+        suggestions.axis = .vertical
+        suggestions.backgroundColor = Theme.surface
+        suggestions.layer.cornerRadius = 12
+        suggestions.clipsToBounds = true
+        suggestions.isHidden = true
+
         let filmLabel = UILabel.make(Theme.display(40, weight: .black), Theme.text, lines: 0)
         filmLabel.setDisplay(film.name.uppercased())
         let whenRow = UIStackView(arrangedSubviews: [UILabel.make(Theme.text(.body)), when])
@@ -141,7 +158,7 @@ final class NightFormViewController: UIViewController {
         screenSeats.spacing = 12
 
         let stack = UIStackView(arrangedSubviews: [
-            filmLabel, Self.card(whenRow), Self.field("Cinema", cinema), Self.field("Address", address), screenSeats, Self.card(bookedRow),
+            filmLabel, Self.card(whenRow), Self.field("Cinema", cinema), suggestions, Self.field("Address", address), screenSeats, Self.card(bookedRow),
         ])
         stack.axis = .vertical
         stack.spacing = 18
@@ -163,6 +180,53 @@ final class NightFormViewController: UIViewController {
         if night == nil || night?.runtime == 0 {
             Task { runtime = try? await TMDB.shared.detail(film.id, .movie).runtime }
         }
+    }
+
+    // MARK: Cinema search
+
+    private func searchCinemas() {
+        let text = cinema.text?.trimmingCharacters(in: .whitespaces) ?? ""
+        if text.count < 2 { showSuggestions([]); return }
+        completer.queryFragment = text
+    }
+
+    func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
+        showSuggestions(cinema.isFirstResponder ? Array(completer.results.prefix(4)) : [])
+    }
+
+    func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
+        showSuggestions([])
+    }
+
+    private func showSuggestions(_ results: [MKLocalSearchCompletion]) {
+        suggestions.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for result in results {
+            var config = UIButton.Configuration.plain()
+            config.title = result.title
+            config.subtitle = result.subtitle.isEmpty ? nil : result.subtitle
+            config.image = UIImage(systemName: "popcorn")
+            config.imagePadding = 12
+            config.titleAlignment = .leading
+            config.baseForegroundColor = Theme.text
+            config.contentInsets = .init(top: 12, leading: 14, bottom: 12, trailing: 14)
+            config.subtitleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { a in
+                var a = a; a.foregroundColor = Theme.secondary; return a
+            }
+            let button = UIButton(configuration: config)
+            button.contentHorizontalAlignment = .leading
+            button.addAction(UIAction { [weak self] _ in self?.pick(result) }, for: .primaryActionTriggered)
+            suggestions.addArrangedSubview(button)
+        }
+        guard suggestions.isHidden != results.isEmpty else { return }
+        UIView.animate(withDuration: 0.2) { self.suggestions.isHidden = results.isEmpty }
+    }
+
+    private func pick(_ result: MKLocalSearchCompletion) {
+        Haptics.tap()
+        cinema.text = result.title
+        if !result.subtitle.isEmpty { address.text = result.subtitle }
+        showSuggestions([])
+        screen.becomeFirstResponder()
     }
 
     private func save() {
