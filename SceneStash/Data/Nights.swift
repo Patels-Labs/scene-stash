@@ -29,6 +29,11 @@ final class MovieNight: NSManagedObject {
         NightStatus.at(now, showtime: showtime ?? .distantFuture, runtime: Int(runtime), booked: booked)
     }
     var lightsUp: Date? { showtime.map { NightStatus.lightsUp($0, runtime: Int(runtime)) } }
+    /// "Odeon Luxe · Screen 1 · H7–H10", or nil before a cinema is picked.
+    var whereLine: String? {
+        let bits = [cinema, screen.map { "Screen \($0)" }, seats].compactMap { $0 }.filter { !$0.isEmpty }
+        return cinema?.isEmpty == false ? bits.joined(separator: " · ") : nil
+    }
     /// Someone else's night you were invited to.
     @MainActor var isGuest: Bool {
         guard let store = objectID.persistentStore else { return false }
@@ -133,7 +138,8 @@ extension Store {
     }
 
     /// Moves the night into its own share zone and returns the share for the invite sheet.
-    func makeShare(for night: MovieNight) async throws -> CKShare {
+    func makeShare(for id: NSManagedObjectID) async throws -> CKShare {
+        guard let night = try context.existingObject(with: id) as? MovieNight else { throw CKError(.unknownItem) }
         let (_, share, _) = try await container.share([night], to: nil)
         share[CKShare.SystemFieldKey.title] = "Movie night: \(night.name ?? "a film")"
         share.publicPermission = .none

@@ -12,6 +12,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         let tabs = UITabBarController(tabs: [
             UITab(title: "Tonight", image: UIImage(systemName: "popcorn"), identifier: "tonight") { _ in Self.nav(TonightViewController()) },
             UITab(title: "Stash", image: UIImage(systemName: "ticket"), identifier: "stash") { _ in Self.nav(StashViewController()) },
+            UITab(title: "Nights", image: UIImage(systemName: "person.2"), identifier: "nights") { _ in Self.nav(NightsViewController()) },
             UISearchTab { _ in Self.nav(DiscoverViewController()) },
         ])
         window.rootViewController = tabs
