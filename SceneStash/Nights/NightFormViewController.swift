@@ -115,6 +115,20 @@ final class NightFormViewController: UIViewController {
         booked.isOn = night?.booked ?? false
         booked.onTintColor = Theme.accent
 
+        // Return goes to the next field; the last one closes the keyboard.
+        let fields = [cinema, address, screen, seats]
+        for (i, field) in fields.enumerated() {
+            let next = fields.indices.contains(i + 1) ? fields[i + 1] : nil
+            field.returnKeyType = next == nil ? .done : .next
+            field.addAction(UIAction { [weak field, weak next] _ in
+                if let next { next.becomeFirstResponder() } else { field?.resignFirstResponder() }
+            }, for: .editingDidEndOnExit)
+        }
+        // So does tapping anywhere that isn't a field.
+        let tap = UITapGestureRecognizer(target: view, action: #selector(UIView.endEditing(_:)))
+        tap.cancelsTouchesInView = false
+        view.addGestureRecognizer(tap)
+
         let filmLabel = UILabel.make(Theme.display(40, weight: .black), Theme.text, lines: 0)
         filmLabel.setDisplay(film.name.uppercased())
         let whenRow = UIStackView(arrangedSubviews: [UILabel.make(Theme.text(.body)), when])
