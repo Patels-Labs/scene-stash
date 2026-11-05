@@ -110,16 +110,35 @@ final class Store {
     let container: NSPersistentCloudKitContainer
     var context: NSManagedObjectContext { container.viewContext }
 
+    static let containerID = "iCloud.com.heetpatel.scenestash"
+
+    /// Your library, mirrored to your private iCloud database.
+    private(set) var privateStore: NSPersistentStore?
+    /// Movie nights other people shared with you, mirrored from the shared iCloud database.
+    private(set) var sharedStore: NSPersistentStore?
+
     private init() {
         container = NSPersistentCloudKitContainer(name: "SceneStash", managedObjectModel: Self.model)
         let description = container.persistentStoreDescriptions.first!
-        description.cloudKitContainerOptions = Self.cloudEnabled ? NSPersistentCloudKitContainerOptions(containerIdentifier: "iCloud.com.heetpatel.scenestash") : nil
+        description.cloudKitContainerOptions = Self.cloudEnabled ? NSPersistentCloudKitContainerOptions(containerIdentifier: Self.containerID) : nil
         description.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
         description.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
+        let privateURL = description.url!
+        let sharedURL = privateURL.deletingLastPathComponent().appendingPathComponent("SceneStash-shared.sqlite")
+        if Self.cloudEnabled {
+            let shared = description.copy() as! NSPersistentStoreDescription
+            shared.url = sharedURL
+            let options = NSPersistentCloudKitContainerOptions(containerIdentifier: Self.containerID)
+            options.databaseScope = .shared
+            shared.cloudKitContainerOptions = options
+            container.persistentStoreDescriptions.append(shared)
+        }
         container.loadPersistentStores { _, error in
             // Sync failures (no iCloud account, schema not deployed) don't fail the load; local data keeps working.
             if let error { print("Store failed to load: \(error)") }
         }
+        privateStore = container.persistentStoreCoordinator.persistentStore(for: privateURL)
+        sharedStore = container.persistentStoreCoordinator.persistentStore(for: sharedURL)
         context.automaticallyMergesChangesFromParent = true
         context.mergePolicy = NSMergePolicy.mergeByPropertyObjectTrump
         NotificationCenter.default.addObserver(forName: NSPersistentCloudKitContainer.eventChangedNotification, object: container, queue: .main) { note in
@@ -332,8 +351,43 @@ final class Store {
             attr("breakMinutes", .integer16AttributeType, 15), attr("runOver", .booleanAttributeType, true),
             attr("createdAt", .dateAttributeType),
         ]
+        let night = NSEntityDescription()
+        night.name = "MovieNight"
+        night.managedObjectClassName = NSStringFromClass(MovieNight.self)
+        let note = NSEntityDescription()
+        note.name = "NightNote"
+        note.managedObjectClassName = NSStringFromClass(NightNote.self)
+        let notes = NSRelationshipDescription()
+        notes.name = "notes"
+        notes.destinationEntity = note
+        notes.minCount = 0
+        notes.maxCount = 0
+        notes.deleteRule = .cascadeDeleteRule
+        notes.isOptional = true
+        let noteNight = NSRelationshipDescription()
+        noteNight.name = "night"
+        noteNight.destinationEntity = night
+        noteNight.maxCount = 1
+        noteNight.deleteRule = .nullifyDeleteRule
+        noteNight.isOptional = true
+        notes.inverseRelationship = noteNight
+        noteNight.inverseRelationship = notes
+        night.properties = [
+            attr("uuid", .stringAttributeType), attr("tmdbID", .integer64AttributeType, 0),
+            attr("name", .stringAttributeType), attr("posterPath", .stringAttributeType),
+            attr("backdropPath", .stringAttributeType), attr("runtime", .integer32AttributeType, 0),
+            attr("showtime", .dateAttributeType), attr("cinema", .stringAttributeType),
+            attr("address", .stringAttributeType), attr("screen", .stringAttributeType),
+            attr("seats", .stringAttributeType), attr("booked", .booleanAttributeType, false),
+            attr("bookedBy", .stringAttributeType), attr("createdAt", .dateAttributeType), notes,
+        ]
+        note.properties = [
+            attr("uuid", .stringAttributeType), attr("authorID", .stringAttributeType),
+            attr("authorName", .stringAttributeType), attr("text", .stringAttributeType),
+            attr("rating", .integer16AttributeType, 0), attr("createdAt", .dateAttributeType), noteNight,
+        ]
         let model = NSManagedObjectModel()
-        model.entities = [tracked, episode, marathon]
+        model.entities = [tracked, episode, marathon, night, note]
         return model
     }()
 }
