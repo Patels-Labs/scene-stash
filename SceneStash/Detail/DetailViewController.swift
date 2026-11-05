@@ -34,6 +34,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
     private let reel = ReelRatingView()
     private let trailerButton = UIButton(configuration: .glass())
     private let marathonButton = UIButton(configuration: .glass())
+    private let nightButton = UIButton(configuration: .glass())
     private let buttonRow = UIStackView()
 
     init(title: Title) {
@@ -185,9 +186,16 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         buttonRow.addArrangedSubview(trailerButton)
         buttonRow.addArrangedSubview(marathonButton)
         buttonRow.spacing = 10
-        let trailerRow = UIStackView(arrangedSubviews: [buttonRow])
+        nightButton.configuration?.title = "Plan a night out"
+        nightButton.configuration?.image = UIImage(systemName: "person.2.fill")
+        nightButton.configuration?.imagePadding = 8
+        nightButton.configuration?.titleTextAttributesTransformer = trailerButton.configuration?.titleTextAttributesTransformer
+        nightButton.addAction(UIAction { [weak self] _ in self?.planNight() }, for: .primaryActionTriggered)
+        nightButton.isHidden = item.mediaType != .movie
+        let trailerRow = UIStackView(arrangedSubviews: [buttonRow, nightButton])
         trailerRow.axis = .vertical
         trailerRow.alignment = .center
+        trailerRow.spacing = 10
 
         [posterRow, titles, tagline, nextUp, ticket, ratingBox, trailerRow].forEach(hero.addArrangedSubview)
         hero.axis = .vertical
@@ -224,7 +232,8 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         poster.foil = rating >= 9
         trailerButton.isHidden = d?.trailerURL == nil
         marathonButton.isHidden = d.map { item.mediaType == .movie ? $0.collection == nil : $0.mainSeasons.isEmpty } ?? true
-        buttonRow.superview?.isHidden = trailerButton.isHidden && marathonButton.isHidden
+        buttonRow.isHidden = trailerButton.isHidden && marathonButton.isHidden
+        nightButton.configuration?.title = Store.shared.nights(for: item).contains { $0.status() != .creditsRolled } ? "Your night out" : "Plan a night out"
 
         if item.mediaType == .tv, let d {
             let remaining = Progress.remaining(seasons: seasonMap, watched: watched, aired: airedKey)
@@ -289,6 +298,19 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         }
         let anchor = find(tabBar) ?? tabBar
         return anchor.convert(CGPoint(x: anchor.bounds.midX, y: anchor.bounds.midY), to: window)
+    }
+
+    /// Opens the night already planned for this film, or starts planning one.
+    private func planNight() {
+        Haptics.tap()
+        if let upcoming = Store.shared.nights(for: item).first(where: { $0.status() != .creditsRolled }) {
+            navigationController?.pushViewController(NightViewController(night: upcoming), animated: true)
+            return
+        }
+        let form = NightFormViewController(title: detail?.title ?? item) { [weak self] night in
+            self?.navigationController?.pushViewController(NightViewController(night: night), animated: true)
+        }
+        present(UINavigationController(rootViewController: form), animated: true)
     }
 
     /// A film series becomes a marathon of every released part; a show, the rest of the selected season.
