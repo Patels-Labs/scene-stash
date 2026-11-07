@@ -50,7 +50,8 @@ final class NightsViewController: UIViewController, UICollectionViewDelegate {
         clock?.invalidate()
     }
 
-    @objc private func storeChanged() { reload() }
+    /// Off screen it waits: viewWillAppear reloads, and each reload looks up every night's share.
+    @objc private func storeChanged() { if view.window != nil { reload() } }
 
     private func reload() {
         let nights = Store.shared.nights()
