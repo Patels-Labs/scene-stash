@@ -37,11 +37,11 @@ final class NightsViewController: UIViewController, UICollectionViewDelegate {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        Store.shared.stashFinishedNights()
+        Store.shared.updateFromNights()
         reload()
         // Stages change with the clock, not just with edits.
         clock = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
-            MainActor.assumeIsolated { [weak self] in Store.shared.stashFinishedNights(); self?.reload() }
+            MainActor.assumeIsolated { [weak self] in Store.shared.updateFromNights(); self?.reload() }
         }
     }
 

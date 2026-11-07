@@ -175,9 +175,9 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
 
     private func render() {
         let stage = night.status()
-        if stage == .creditsRolled, let uuid = night.uuid, !Prefs.stashedNights.contains(uuid) {
-            // Next turn of the run loop: stashing saves, and saving re-renders.
-            DispatchQueue.main.async { Store.shared.stashFinishedNights() }
+        if let uuid = night.uuid, (stage == .lightsDown && !Prefs.watchingNights.contains(uuid)) || (stage == .creditsRolled && !Prefs.stashedNights.contains(uuid)) {
+            // Next turn of the run loop: updating saves, and saving re-renders.
+            DispatchQueue.main.async { Store.shared.updateFromNights() }
         }
         let showtime = night.showtime ?? .now
         let crew = Store.shared.guests(for: night)
