@@ -236,9 +236,12 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
             empty.text = "Nobody's written theirs yet. Go first."
             notes.addArrangedSubview(empty)
         }
+        // Yours is the film's rating and line, wherever you set them.
+        let film = Store.shared.tracked(night.title.id, .movie)
         let mine = Store.shared.myNote(on: night)
-        if !myLine.isFirstResponder { myLine.text = mine?.text }
-        if !myRating.isInteracting, myRating.value != Int(mine?.rating ?? 0) { myRating.set(Int(mine?.rating ?? 0), animated: false) }
+        let line = mine?.text ?? film?.note, rating = Int(mine?.rating ?? film?.rating ?? 0)
+        if !myLine.isFirstResponder { myLine.text = line }
+        if !myRating.isInteracting, myRating.value != rating { myRating.set(rating, animated: false) }
     }
 
     private static let handwriting: UIFont = {
@@ -258,7 +261,8 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
 
     private func saveMyLine() {
         let mine = Store.shared.myNote(on: night)
-        guard myLine.text != mine?.text || myRating.value != Int(mine?.rating ?? 0) else { return }
+        guard mine == nil || myLine.text != mine?.text || myRating.value != Int(mine?.rating ?? 0) else { return }
+        guard mine != nil || !(myLine.text ?? "").isEmpty || myRating.value > 0 else { return }
         Store.shared.setNote(myLine.text, rating: myRating.value, on: night, as: Store.shared.myName(on: night))
     }
 

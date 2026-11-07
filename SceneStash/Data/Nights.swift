@@ -96,8 +96,30 @@ extension Store {
         night.notes?.first { $0.authorID == Prefs.me }
     }
 
-    /// Writes your one line and rating for the night. Notes live in the night's store so they travel with its share.
+    /// Writes your one line and rating for the night. They're the film's too: the same rating and
+    /// stub-book line show on its page and in your stash.
     func setNote(_ text: String?, rating: Int, on night: MovieNight, as name: String?) {
+        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let line = trimmed?.isEmpty == false ? trimmed : nil
+        writeMyNote(line, rating: rating, on: night, as: name)
+        let item = tracked(night.title.id, .movie) ?? track(night.title, status: .seen, runtime: night.runtime > 0 ? Int(night.runtime) : nil)
+        item.rating = Int16(rating)
+        item.note = line
+        save()
+    }
+
+    /// After rating a film or writing its line elsewhere, carries them to your note on each night you saw it,
+    /// so friends see them too.
+    func mirrorToNights(_ title: Title) {
+        guard title.mediaType == .movie, let item = tracked(title.id, .movie) else { return }
+        for night in nights(for: title) where night.status() == .creditsRolled {
+            guard myNote(on: night) != nil || item.rating > 0 || item.note != nil else { continue }
+            writeMyNote(item.note, rating: Int(item.rating), on: night, as: myName(on: night))
+        }
+    }
+
+    /// Notes live in the night's store so they travel with its share.
+    private func writeMyNote(_ text: String?, rating: Int, on night: MovieNight, as name: String?) {
         let note = myNote(on: night) ?? {
             let n = NightNote(context: context)
             if let store = night.objectID.persistentStore ?? privateStore { context.assign(n, to: store) }
@@ -107,11 +129,9 @@ extension Store {
             n.night = night
             return n
         }()
-        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines)
-        note.text = trimmed?.isEmpty == false ? trimmed : nil
+        note.text = text
         note.rating = Int16(rating)
         note.authorName = name
-        save()
     }
 
     /// Keeps your stash in step with your nights out: the film goes on Watching when the lights go down
