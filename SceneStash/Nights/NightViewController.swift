@@ -7,6 +7,7 @@ import UIKit
 final class NightViewController: UIViewController, UICloudSharingControllerDelegate {
     private let night: MovieNight
     private var clock: Timer?
+    private var creatingShare = false
 
     private let glow = GlowView()
     private let poster = UIImageView()
@@ -102,6 +103,9 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
     @objc private func storeChanged() {
         // A friend deleted the night, or you left it.
         guard !night.isDeleted, night.managedObjectContext != nil else { navigationController?.popViewController(animated: true); return }
+        // Sharing moves the night into its own zone and fires a burst of changes; looking up the share
+        // mid-move can block, so wait until it's done.
+        guard !creatingShare else { return }
         render()
     }
 
@@ -308,17 +312,37 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
             present(alert, animated: true)
             return
         }
-        let store = Store.shared
-        let options = CKAllowedSharingOptions(allowedParticipantPermissionOptions: .readWrite, allowedParticipantAccessOptions: .specifiedRecipientsOnly)
-        let provider = NSItemProvider()
-        if let share = store.share(for: night) {
-            provider.registerCKShare(share, container: store.cloudContainer, allowedSharingOptions: options)
-        } else {
-            let id = night.objectID
-            provider.registerCKShare(container: store.cloudContainer, allowedSharingOptions: options) {
-                try await Store.shared.makeShare(for: id)
+        if let share = Store.shared.share(for: night) { presentInvite(share, from: sender); return }
+        // Make the share before the sheet opens: creating it from inside the sheet hid the real error and could hang.
+        creatingShare = true
+        invite.configuration?.showsActivityIndicator = true
+        invite.isEnabled = false
+        let id = night.objectID
+        Task {
+            defer {
+                creatingShare = false
+                invite.configuration?.showsActivityIndicator = false
+                invite.isEnabled = true
+                render()
+            }
+            do {
+                presentInvite(try await Store.shared.makeShare(for: id), from: sender)
+            } catch {
+                let ns = error as NSError
+                let underlying = (ns.userInfo[NSUnderlyingErrorKey] as? NSError).map { "\n\($0.localizedDescription) (\($0.domain) \($0.code))" } ?? ""
+                let alert = UIAlertController(title: "Couldn't create the invite",
+                                              message: "\(ns.localizedDescription) (\(ns.domain) \(ns.code))\(underlying)", preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "OK", style: .default))
+                present(alert, animated: true)
             }
         }
+    }
+
+    private func presentInvite(_ share: CKShare, from sender: UIView?) {
+        let provider = NSItemProvider()
+        // Read and write for everyone; you choose whether it's only people you add or anyone with the link.
+        let options = CKAllowedSharingOptions(allowedParticipantPermissionOptions: .readWrite, allowedParticipantAccessOptions: .any)
+        provider.registerCKShare(share, container: Store.shared.cloudContainer, allowedSharingOptions: options)
         let sheet = UIActivityViewController(activityItemsConfiguration: UIActivityItemsConfiguration(itemProviders: [provider]))
         sheet.popoverPresentationController?.sourceView = sender
         present(sheet, animated: true)
