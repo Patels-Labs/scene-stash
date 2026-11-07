@@ -96,8 +96,30 @@ extension Store {
         night.notes?.first { $0.authorID == Prefs.me }
     }
 
-    /// Writes your one line and rating for the night. Notes live in the night's store so they travel with its share.
+    /// Writes your one line and rating for the night. They're the film's too: the same rating and
+    /// stub-book line show on its page and in your stash.
     func setNote(_ text: String?, rating: Int, on night: MovieNight, as name: String?) {
+        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let line = trimmed?.isEmpty == false ? trimmed : nil
+        writeMyNote(line, rating: rating, on: night, as: name)
+        let item = tracked(night.title.id, .movie) ?? track(night.title, status: .seen, runtime: night.runtime > 0 ? Int(night.runtime) : nil)
+        item.rating = Int16(rating)
+        item.note = line
+        save()
+    }
+
+    /// After rating a film or writing its line elsewhere, carries them to your note on each night you saw it,
+    /// so friends see them too.
+    func mirrorToNights(_ title: Title) {
+        guard title.mediaType == .movie, let item = tracked(title.id, .movie) else { return }
+        for night in nights(for: title) where night.status() == .creditsRolled {
+            guard myNote(on: night) != nil || item.rating > 0 || item.note != nil else { continue }
+            writeMyNote(item.note, rating: Int(item.rating), on: night, as: myName(on: night))
+        }
+    }
+
+    /// Notes live in the night's store so they travel with its share.
+    private func writeMyNote(_ text: String?, rating: Int, on night: MovieNight, as name: String?) {
         let note = myNote(on: night) ?? {
             let n = NightNote(context: context)
             if let store = night.objectID.persistentStore ?? privateStore { context.assign(n, to: store) }
@@ -107,25 +129,46 @@ extension Store {
             n.night = night
             return n
         }()
-        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines)
-        note.text = trimmed?.isEmpty == false ? trimmed : nil
+        note.text = text
         note.rating = Int16(rating)
         note.authorName = name
+    }
+
+    /// Keeps your stash in step with your nights out: the film goes on Watching when the lights go down
+    /// and Seen, timed to when they came up, once the credits roll. Each step happens once per night,
+    /// so changing it by hand afterwards sticks.
+    func updateFromNights(now: Date = .now) {
+        var watching = Prefs.watchingNights, done = Prefs.stashedNights
+        for night in nights() {
+            guard let uuid = night.uuid else { continue }
+            let current = tracked(night.title.id, .movie)?.status
+            let runtime = night.runtime > 0 ? Int(night.runtime) : nil
+            switch night.status(at: now) {
+            case .lightsDown where !watching.contains(uuid):
+                watching.insert(uuid)
+                if current != .seen && current != .watching { track(night.title, status: .watching, runtime: runtime) }
+            case .creditsRolled where !done.contains(uuid):
+                done.insert(uuid)
+                if current != .seen { track(night.title, status: .seen, runtime: runtime).watchedAt = night.lightsUp }
+            default: break
+            }
+        }
+        guard watching != Prefs.watchingNights || done != Prefs.stashedNights else { return }
+        Prefs.watchingNights = watching
+        Prefs.stashedNights = done
         save()
     }
 
-    /// Once the credits roll, the film goes into your stash as seen, timed to when the lights came up. Once per night.
-    func stashFinishedNights(now: Date = .now) {
-        var done = Prefs.stashedNights
-        for night in nights() where night.status(at: now) == .creditsRolled {
-            guard let uuid = night.uuid, !done.contains(uuid) else { continue }
-            done.insert(uuid)
-            guard tracked(night.title.id, .movie)?.status != .seen else { continue }
-            let item = track(night.title, status: .seen, runtime: night.runtime > 0 ? Int(night.runtime) : nil)
-            item.watchedAt = night.lightsUp
+    /// Today's night out, if it hasn't finished yet.
+    func tonightsNight(now: Date = .now) -> MovieNight? {
+        nights().first { night in
+            guard let showtime = night.showtime else { return false }
+            return Calendar.current.isDate(showtime, inSameDayAs: now) && night.status(at: now) != .creditsRolled
         }
-        Prefs.stashedNights = done
-        save()
+    }
+
+    func night(uuid: String) -> MovieNight? {
+        nights().first { $0.uuid == uuid }
     }
 
     // MARK: Sharing
@@ -190,6 +233,10 @@ extension Prefs {
     static var me: String {
         get { UserDefaults.standard.string(forKey: "me") ?? localMe }
         set { UserDefaults.standard.set(newValue, forKey: "me") }
+    }
+    static var watchingNights: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: "watchingNights") ?? []) }
+        set { UserDefaults.standard.set(Array(newValue), forKey: "watchingNights") }
     }
     static var stashedNights: Set<String> {
         get { Set(UserDefaults.standard.stringArray(forKey: "stashedNights") ?? []) }

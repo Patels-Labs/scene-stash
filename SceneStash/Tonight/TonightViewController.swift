@@ -6,8 +6,12 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
     nonisolated struct UpNext: Hashable { let show: Title; let episode: Episode; let remaining: Int; let runtime: Int? }
     nonisolated struct Film: Hashable { let title: Title; let position: Int; let runtime: Int }
     nonisolated struct Upcoming: Hashable { let title: Title; let date: Date; let label: String }
+    /// Tonight's night out: blocked from doors until the lights come up.
+    nonisolated struct Outing: Hashable { let uuid: String; let title: Title; let place: String?; let minutes: Int }
     nonisolated enum Slot: Hashable {
         case episode(UpNext), film(Film), pick(Film), free, intermission(Int)
+        /// A night out, and the time before it to get there.
+        case outing(Outing), headOut(Int)
 
         var minutes: Int {
             switch self {
@@ -15,14 +19,16 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             case .film(let f): max(f.runtime - f.position / 60, 1)
             case .pick(let f): f.runtime
             case .free: 0
-            case .intermission(let m): m
+            case .intermission(let m), .headOut(let m): m
+            case .outing(let o): o.minutes
             }
         }
         var title: Title? {
             switch self {
             case .episode(let u): u.show
             case .film(let f), .pick(let f): f.title
-            case .free, .intermission: nil
+            case .outing(let o): o.title
+            case .free, .intermission, .headOut: nil
             }
         }
     }
@@ -41,7 +47,11 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
     private var clock: Timer?
     /// Today's marathon, when there is one: its name and when its doors open.
     private var marathon: (name: String, doors: Date)?
-    private var doors: Date { marathon?.doors ?? Self.doors() }
+    /// Tonight's night out, when there is one: the programme bends around its showtime.
+    private var outingTimes: (showtime: Date, lightsUp: Date)?
+    private var doors: Date { marathon?.doors ?? min(Self.doors(), outingTimes?.showtime ?? .distantFuture) }
+    /// Midnight-ish, or later if tonight's film runs past it.
+    private var lightsUp: Date { max(Self.lightsUp(), outingTimes?.lightsUp ?? .distantPast) }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -110,6 +120,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
     // MARK: Data
 
     private func refresh() {
+        Store.shared.updateFromNights()
         Task {
             let tracked = Store.shared.all().filter { $0.status != .seen }
             let shows = tracked.filter { $0.mediaType == .tv }.map(\.title)
@@ -177,11 +188,17 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             return slots
         }
         marathon = nil
-        let films = Store.shared.all(.watching).filter { $0.mediaType == .movie && $0.runtime > 0 }
+        let night = Store.shared.tonightsNight()
+        outingTimes = night.flatMap { n in n.showtime.flatMap { s in n.lightsUp.map { (s, $0) } } }
+        let films = Store.shared.all(.watching).filter { $0.mediaType == .movie && $0.runtime > 0 && Int($0.tmdbID) != night.map { Int($0.tmdbID) } }
             .map { Slot.film(Film(title: $0.title, position: Int($0.position), runtime: Int($0.runtime))) }
         var slots = Array(upNext.prefix(1).map(Slot.episode)) + films + upNext.dropFirst().map(Slot.episode)
+        if let night, let uuid = night.uuid, let times = outingTimes {
+            return Self.around(night: Outing(uuid: uuid, title: night.title, place: night.whereLine, minutes: 0),
+                               showtime: times.showtime, lightsUp: times.lightsUp, doors: doors, queue: slots)
+        }
         let used = slots.reduce(0) { $0 + $1.minutes }
-        let left = Int(Self.lightsUp().timeIntervalSince(doors) / 60) - used
+        let left = Int(lightsUp.timeIntervalSince(doors) / 60) - used
         if let pick = Store.shared.all(.watchlist).first(where: {
             $0.mediaType == .movie && $0.runtime > 0 && Int($0.runtime) <= left && ($0.releaseDate.map { DateText.isPast($0) } ?? true)
         }) {
@@ -190,6 +207,23 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         let rest = left - slots.reduce(0) { $0 + $1.minutes } + used
         if !slots.isEmpty, rest >= 20 { slots.append(.free) }
         return slots
+    }
+
+    /// A night out holds its place: what fits before it plays first (leaving half an hour to get there),
+    /// then the gap to head out, the night itself, and the rest of the programme after.
+    nonisolated static func around(night: Outing, showtime: Date, lightsUp: Date, doors: Date, queue: [Slot]) -> [Slot] {
+        var queue = queue, slots: [Slot] = [], t = doors
+        let leave = showtime - 30 * 60
+        while let next = queue.first, t + TimeInterval(next.minutes * 60) <= leave {
+            slots.append(next)
+            t += TimeInterval(next.minutes * 60)
+            queue.removeFirst()
+        }
+        let gap = Int(showtime.timeIntervalSince(t) / 60)
+        if gap > 0 { slots.append(.headOut(gap)) }
+        let start = max(showtime, doors)
+        slots.append(.outing(Outing(uuid: night.uuid, title: night.title, place: night.place, minutes: max(Int(lightsUp.timeIntervalSince(start) / 60), 1))))
+        return slots + queue
     }
 
     /// Midnight, unless that's under an hour away (or past), in which case two hours from now.
@@ -215,6 +249,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             switch slot {
             case .episode(let u): code = "S\(u.episode.seasonNumber) E\(u.episode.episodeNumber)"
             case .film(let f): code = "\(max(f.runtime - f.position / 60, 0))m left"
+            case .outing(let o): code = o.place ?? "Night out"
             default: code = DateText.runtime(slot.minutes)
             }
             snap.programme.append(.init(id: title.id, name: title.name, code: code, start: start, tint: tint))
@@ -254,7 +289,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             Store.shared.setWatched([EpisodeKey(season: u.episode.seasonNumber, episode: u.episode.episodeNumber)], watched: true, show: u.show, runtime: u.runtime)
         case .film(let f), .pick(let f):
             Store.shared.track(f.title, status: .seen, runtime: f.runtime)
-        case .free, .intermission: break
+        case .free, .intermission, .headOut, .outing: break
         }
         Haptics.success()
     }
@@ -290,7 +325,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
     private func configureDataSource() {
         let headerCellReg = UICollectionView.CellRegistration<ProgrammeHeaderCell, Item> { [unowned self] cell, _, _ in
             let used = programme.reduce(0) { $0 + $1.minutes }
-            cell.configure(doors: doors, lightsUp: Self.lightsUp(), booked: used, slots: programme.filter { $0.title != nil }.count,
+            cell.configure(doors: doors, lightsUp: lightsUp, booked: used, slots: programme.filter { $0.title != nil }.count,
                            empty: Store.shared.all().isEmpty, marathon: marathon?.name)
             cell.onDiscover = { [weak self] in self?.openSearch() }
         }
@@ -349,7 +384,12 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         let title: Title
         switch item {
         case .slot(.free): openSearch(); return
-        case .slot(.intermission): return
+        case .slot(.intermission), .slot(.headOut): return
+        case .slot(.outing(let o)):
+            guard let night = Store.shared.night(uuid: o.uuid) else { return }
+            Haptics.tap()
+            navigationController?.pushViewController(NightViewController(night: night), animated: true)
+            return
         case .slot(let s): guard let t = s.title else { return }; title = t
         case .upcoming(let u): title = u.title
         case .trending(let t), .watchlist(let t): title = t
@@ -542,7 +582,7 @@ final class ProgrammeCell: UICollectionViewCell {
     func configure(_ slot: TonightViewController.Slot, start: Date, isNow: Bool) {
         time.setCaps(isNow ? "Now" : start.formatted(.dateTime.hour().minute()), kern: 1)
         time.textColor = isNow ? UIColor(red: 1, green: 0.35, blue: 0.3, alpha: 1) : Theme.tertiary
-        let isFree: Bool = { switch slot { case .free, .intermission: true; default: false } }()
+        let isFree: Bool = { switch slot { case .free, .intermission, .headOut: true; default: false } }()
         // Cards are as tall as they run, within reason.
         height.constant = isFree ? 52 : min(max(CGFloat(slot.minutes) * 2.4, 124), 240)
         freeHeight.isActive = isFree
@@ -587,8 +627,20 @@ final class ProgrammeCell: UICollectionViewCell {
             code.isHidden = false
             code.setCaps("Intermission · \(m) min", kern: 1.2)
             accessibilityLabel = "Intermission, \(m) minutes"
+        case .headOut(let m):
+            code.isHidden = false
+            code.setCaps(m > 45 ? "Free, then head out · \(DateText.runtime(m))" : "Head out to the cinema · \(m) min", kern: 1.2)
+            accessibilityLabel = "Head out to the cinema, \(m) minutes"
+        case .outing(let o):
+            code.setCaps("Night out · \(DateText.runtime(o.minutes))", kern: 1.2)
+            name.setDisplay(o.title.name.uppercased())
+            sub.text = o.place ?? "Cinema to be picked"
+            show(TMDB.imageURL(o.title.backdropPath, .backdrop), poster: o.title.posterPath, id: o.title.id)
+            accessibilityLabel = "Night out: \(o.title.name), \(o.place ?? "")"
         }
-        accessibilityCustomActions = isFree ? nil : [UIAccessibilityCustomAction(name: stub.accessibilityLabel ?? "Done") { [weak self] _ in
+        // A night out ends itself when the credits roll; there's no stub to tear.
+        if case .outing = slot { stub.isHidden = true }
+        accessibilityCustomActions = isFree || stub.isHidden ? nil : [UIAccessibilityCustomAction(name: stub.accessibilityLabel ?? "Done") { [weak self] _ in
             self?.stub.tear(); return true
         }]
     }

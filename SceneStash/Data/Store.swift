@@ -220,6 +220,7 @@ final class Store {
     func setRating(_ rating: Int, for title: Title) {
         let item = tracked(title.id, title.mediaType) ?? track(title, status: .seen)
         item.rating = Int16(rating)
+        mirrorToNights(title)
         save()
     }
 
@@ -236,6 +237,7 @@ final class Store {
         guard let item = tracked(title.id, title.mediaType) else { return }
         let trimmed = note?.trimmingCharacters(in: .whitespacesAndNewlines)
         item.note = trimmed?.isEmpty == false ? trimmed : nil
+        mirrorToNights(title)
         save()
     }
 
