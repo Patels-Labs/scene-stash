@@ -44,7 +44,7 @@ final class NightFilmPickerViewController: UITableViewController, UISearchResult
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { rows.count }
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        searching ? nil : shortlist.isEmpty ? "Search for a film" : "From your stash"
+        searching ? nil : shortlist.isEmpty ? "Search for a film" : "From your library"
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -146,10 +146,10 @@ final class NightFormViewController: UIViewController, MKLocalSearchCompleterDel
         suggestions.clipsToBounds = true
         suggestions.isHidden = true
 
-        let filmLabel = UILabel.make(Theme.display(40, weight: .black), Theme.text, lines: 0)
-        filmLabel.setDisplay(film.name.uppercased())
+        let filmLabel = UILabel.make(Theme.text(.title1, weight: .bold), Theme.text, lines: 0)
+        filmLabel.text = film.name
         let whenRow = UIStackView(arrangedSubviews: [UILabel.make(Theme.text(.body)), when])
-        (whenRow.arrangedSubviews[0] as? UILabel)?.text = "Doors"
+        (whenRow.arrangedSubviews[0] as? UILabel)?.text = "Showtime"
         let bookedLabel = UILabel.make(Theme.text(.body), Theme.text, lines: 0)
         bookedLabel.text = "We've got tickets"
         let bookedRow = UIStackView(arrangedSubviews: [bookedLabel, booked])
