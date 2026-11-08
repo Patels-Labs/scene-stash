@@ -39,7 +39,7 @@ enum Shelf {
 
     private static func extra(_ captions: Int) -> CGFloat { captions > 0 ? 8 + CGFloat(captions) * captionLine : 0 }
 
-    private static func row(width: CGFloat, height: CGFloat) -> NSCollectionLayoutSection {
+    static func row(width: CGFloat, height: CGFloat) -> NSCollectionLayoutSection {
         let item = NSCollectionLayoutItem(layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .fractionalHeight(1)))
         let group = NSCollectionLayoutGroup.horizontal(layoutSize: .init(widthDimension: .absolute(width), heightDimension: .absolute(height)), subitems: [item])
         let section = NSCollectionLayoutSection(group: group)

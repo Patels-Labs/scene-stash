@@ -10,91 +10,233 @@ final class HostCell: UICollectionViewCell {
     }
 }
 
-final class TextCell: UICollectionViewCell {
-    let label = UILabel.make(Theme.text(.body), Theme.text.withAlphaComponent(0.82), lines: 5)
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        contentView.addSubview(label)
-        label.pin(to: contentView)
+/// The grouped-card background Apple uses for information blocks.
+enum Card {
+    static let fill = UIColor(red: 0.11, green: 0.11, blue: 0.118, alpha: 1)
+    static let rule = UIColor(red: 0.33, green: 0.33, blue: 0.345, alpha: 0.6)
+
+    static func style(_ view: UIView) {
+        view.backgroundColor = fill
+        view.layer.cornerRadius = 14
+        view.layer.cornerCurve = .continuous
     }
-    required init?(coder: NSCoder) { fatalError() }
 }
 
-/// A cast list line from a theatre programme: the name set large, dotted leaders, the role.
-final class CompanyCell: UICollectionViewCell {
-    private let name = UILabel.make(Theme.display(28, weight: .black))
-    private let role = UILabel.make(Theme.text(.footnote), Theme.secondary)
-    private let leader = CAShapeLayer()
-    private let rule = UIView()
+/// "Where You Are" in a film: the time, a slider to drag to where you stopped, and when you'll be done.
+/// While Start Watching is running it follows the clock instead.
+final class WhereYouAreCell: UICollectionViewCell {
+    var onCommit: ((Int) -> Void)?
+    private let time = UILabel.make(Theme.text(.title1, weight: .bold).monospacedDigits)
+    private let left = UILabel.make(Theme.text(.footnote), Theme.secondary)
+    private let slider = UISlider()
+    private let note = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 0)
+    private var runtime = 0
+    private var live: WatchSession.State?
+    private var ticker: Timer?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        leader.strokeColor = UIColor(white: 1, alpha: 0.28).cgColor
-        leader.lineWidth = 1.5
-        leader.lineCap = .round
-        leader.lineDashPattern = [0.1, 5]
-        contentView.layer.addSublayer(leader)
-        name.setContentCompressionResistancePriority(.required, for: .horizontal)
-        name.adjustsFontSizeToFitWidth = true
-        name.minimumScaleFactor = 0.6
-        role.textAlignment = .right
-        role.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        rule.backgroundColor = Theme.hairline
-        [name, role, rule].forEach { contentView.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
-        NSLayoutConstraint.activate([
-            name.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            name.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
-            name.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10),
-            name.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor),
-            role.firstBaselineAnchor.constraint(equalTo: name.firstBaselineAnchor),
-            role.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            role.leadingAnchor.constraint(greaterThanOrEqualTo: name.trailingAnchor, constant: 28),
-            rule.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            rule.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            rule.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            rule.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
-        ])
+        Card.style(contentView)
+        slider.minimumTrackTintColor = Theme.accent
+        slider.accessibilityLabel = "Where you are"
+        slider.addAction(UIAction { [weak self] _ in self?.scrubbed() }, for: .valueChanged)
+        slider.addAction(UIAction { [weak self] _ in self?.commit() }, for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        left.textAlignment = .right
+        let top = UIStackView(arrangedSubviews: [time, left])
+        top.alignment = .firstBaseline
+        let stack = UIStackView(arrangedSubviews: [top, slider, note])
+        stack.axis = .vertical
+        stack.spacing = 10
+        contentView.addSubview(stack)
+        stack.pin(to: contentView, inset: 16)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        ticker?.invalidate()
+    }
+
+    func configure(position: Int, runtime: Int, live session: WatchSession.State?) {
+        self.runtime = runtime
+        live = session
+        ticker?.invalidate()
+        slider.isEnabled = session == nil
+        if let session {
+            if session.pausedAt == nil {
+                ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.tick() } }
+            }
+            tick()
+        } else {
+            if !slider.isTracking { slider.value = Float(position) / Float(max(runtime * 60, 1)) }
+            scrubbed()
+        }
+    }
+
+    private var seconds: Int { Int((slider.value * Float(runtime)).rounded()) * 60 }
+
+    private func tick() {
+        guard let live else { return }
+        let elapsed = Int(live.elapsed)
+        slider.value = Float(live.elapsed) / Float(max(runtime * 60, 1))
+        time.text = String(format: "%d:%02d:%02d", elapsed / 3600, elapsed % 3600 / 60, elapsed % 60)
+        let remaining = max(runtime * 60 - elapsed, 0) / 60
+        left.text = "\(DateText.runtime(remaining)) left"
+        note.text = live.pausedAt == nil
+            ? "Now Showing, done by \(Date.now.addingTimeInterval(TimeInterval(remaining * 60)).formatted(date: .omitted, time: .shortened)). Pause from the Lock Screen for ads or a break."
+            : "Paused. The end time moves with you."
+    }
+
+    private func scrubbed() {
+        guard live == nil else { return }
+        time.text = DateText.clock(seconds)
+        let remaining = max(runtime - seconds / 60, 0)
+        left.text = seconds == 0 ? DateText.runtime(runtime) : "\(DateText.runtime(remaining)) left"
+        note.text = seconds == 0
+            ? "Not started. Start Watching keeps time on the Lock Screen, or drag to where you are."
+            : "Done by \(Date.now.addingTimeInterval(TimeInterval(remaining * 60)).formatted(date: .omitted, time: .shortened)) if you carry on now."
+        slider.accessibilityValue = "\(DateText.clock(seconds)) of \(DateText.clock(runtime * 60))"
+    }
+
+    private func commit() {
+        guard live == nil else { return }
+        onCommit?(seconds)
+        Haptics.tap()
+    }
+}
+
+/// An icon, a title and a line, on a card: the after-credits scene, and other one-line facts.
+final class FactCell: UICollectionViewCell {
+    private let icon = UIImageView()
+    private let title = UILabel.make(Theme.text(.body, weight: .semibold))
+    private let detail = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 0)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        Card.style(contentView)
+        let tile = UIView()
+        tile.backgroundColor = Theme.accent.withAlphaComponent(0.18)
+        tile.layer.cornerRadius = 10
+        tile.addSubview(icon)
+        icon.tintColor = Theme.accent
+        icon.contentMode = .center
+        icon.preferredSymbolConfiguration = .init(pointSize: 17, weight: .semibold)
+        icon.pin(to: tile)
+        tile.widthAnchor.constraint(equalToConstant: 40).isActive = true
+        tile.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        let text = UIStackView(arrangedSubviews: [title, detail])
+        text.axis = .vertical
+        text.spacing = 2
+        let row = UIStackView(arrangedSubviews: [tile, text])
+        row.spacing = 14
+        row.alignment = .center
+        contentView.addSubview(row)
+        row.pin(to: contentView, inset: 14)
         isAccessibilityElement = true
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        let y = name.frame.minY + name.font.ascender + 1
-        let from = name.frame.maxX + 8, to = role.text?.isEmpty == false ? role.frame.minX - 8 : contentView.bounds.maxX
-        let p = UIBezierPath()
-        if to > from { p.move(to: CGPoint(x: from, y: y)); p.addLine(to: CGPoint(x: to, y: y)) }
-        leader.path = p.cgPath
-    }
-
-    func configure(_ cast: CastMember) {
-        name.text = cast.name.uppercased()
-        role.text = cast.character
-        accessibilityLabel = [cast.name, cast.character.map { "as \($0)" }].compactMap { $0 }.joined(separator: " ")
-        setNeedsLayout()
+    func configure(symbol: String, title: String, detail: String) {
+        icon.image = UIImage(systemName: symbol)
+        self.title.text = title
+        self.detail.text = detail
+        accessibilityLabel = "\(title). \(detail)"
     }
 }
 
-/// Where to watch, as tickets: services you have are printed in the film's colour, the rest are outlines.
-final class ProviderTicketCell: UICollectionViewCell {
-    private let caption = UILabel.make(Theme.label(.caption2, weight: .bold))
-    private let name = UILabel.make(Theme.display(24, weight: .black))
-    private let shape = CAShapeLayer()
+/// Your rating, 1 to 10, as a row of round buttons. Tapping the chosen one clears it.
+final class RatingCell: UICollectionViewCell {
+    var onChange: ((Int) -> Void)?
+    private var buttons: [UIButton] = []
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        shape.lineWidth = 1.5
-        shape.lineDashPattern = [5, 4]
-        contentView.layer.addSublayer(shape)
-        let stack = UIStackView(arrangedSubviews: [caption, name])
-        stack.axis = .vertical
-        stack.spacing = 4
-        contentView.addSubview(stack)
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        let scroll = UIScrollView()
+        scroll.showsHorizontalScrollIndicator = false
+        scroll.contentInset = .init(top: 0, left: Shelf.margin, bottom: 0, right: Shelf.margin)
+        let row = UIStackView()
+        row.spacing = 8
+        for n in 1...10 {
+            var c = UIButton.Configuration.filled()
+            c.title = "\(n)"
+            c.cornerStyle = .capsule
+            c.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { a in
+                var a = a; a.font = Theme.text(.body, weight: .bold); return a
+            }
+            let b = UIButton(configuration: c)
+            b.accessibilityLabel = "\(n) out of 10"
+            b.addAction(UIAction { [weak self] _ in self?.tap(n) }, for: .primaryActionTriggered)
+            b.widthAnchor.constraint(equalToConstant: 44).isActive = true
+            b.heightAnchor.constraint(equalToConstant: 44).isActive = true
+            buttons.append(b)
+            row.addArrangedSubview(b)
+        }
+        contentView.addSubview(scroll)
+        scroll.pin(to: contentView)
+        scroll.addSubview(row)
+        row.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 18),
-            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -18),
-            stack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            row.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            row.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            row.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    private var value = 0
+
+    func configure(_ rating: Int) {
+        value = rating
+        for (i, b) in buttons.enumerated() {
+            let on = i + 1 == rating
+            b.configuration?.baseBackgroundColor = on ? Theme.accent : UIColor(white: 0.47, alpha: 0.24)
+            b.configuration?.baseForegroundColor = on ? .black : .white
+            b.accessibilityTraits = on ? [.button, .selected] : .button
+        }
+    }
+
+    private func tap(_ n: Int) {
+        let next = n == value ? 0 : n
+        configure(next)
+        Haptics.tap()
+        onChange?(next)
+    }
+}
+
+/// An episode as a tall card: the still with its number, name and a few lines over it, and a tick when watched.
+final class EpisodeLockup: UICollectionViewCell {
+    private let art = ArtView(radius: 12)
+    private let shade = CAGradientLayer()
+    private let label = UILabel.make(Theme.label(.caption2, weight: .semibold), Theme.secondary)
+    private let name = UILabel.make(Theme.text(.body, weight: .semibold), Theme.text, lines: 2)
+    private let blurb = UILabel.make(Theme.text(.footnote), UIColor(white: 1, alpha: 0.7), lines: 3)
+    private let meta = UILabel.make(Theme.text(.footnote), UIColor(white: 1, alpha: 0.85))
+    private let tick = UIImageView(image: UIImage(systemName: "checkmark.circle.fill"))
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentView.addSubview(art)
+        art.pin(to: contentView)
+        shade.colors = [UIColor.clear.cgColor, UIColor(white: 0, alpha: 0.88).cgColor]
+        shade.locations = [0.2, 0.72]
+        art.layer.addSublayer(shade)
+        tick.tintColor = Theme.accent
+        tick.preferredSymbolConfiguration = .init(pointSize: 24, weight: .semibold)
+        tick.backgroundColor = .black
+        tick.layer.cornerRadius = 12
+        let text = UIStackView(arrangedSubviews: [label, name, blurb, meta])
+        text.axis = .vertical
+        text.spacing = 2
+        text.setCustomSpacing(8, after: blurb)
+        [text, tick].forEach { art.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        NSLayoutConstraint.activate([
+            text.leadingAnchor.constraint(equalTo: art.leadingAnchor, constant: 16),
+            text.trailingAnchor.constraint(equalTo: art.trailingAnchor, constant: -16),
+            text.bottomAnchor.constraint(equalTo: art.bottomAnchor, constant: -12),
+            tick.topAnchor.constraint(equalTo: art.topAnchor, constant: 10),
+            tick.trailingAnchor.constraint(equalTo: art.trailingAnchor, constant: -10),
         ])
         isAccessibilityElement = true
         accessibilityTraits = .button
@@ -103,22 +245,144 @@ final class ProviderTicketCell: UICollectionViewCell {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        shape.path = TicketShape.path(in: contentView.bounds.insetBy(dx: 1, dy: 1), corner: 12, notch: 7).cgPath
+        shade.frame = art.bounds
     }
 
-    func configure(_ provider: Provider, mine: Bool, accent: UIColor) {
-        caption.setCaps(mine ? "Yours · included" : "Included", kern: 1.2)
-        name.text = provider.providerName.uppercased()
-        shape.fillColor = mine ? accent.cgColor : nil
-        shape.strokeColor = mine ? nil : UIColor(white: 1, alpha: 0.28).cgColor
-        shape.lineDashPattern = mine ? nil : [5, 4]
-        caption.textColor = mine ? UIColor(white: 0, alpha: 0.7) : Theme.tertiary
-        name.textColor = mine ? .black : Theme.text
-        accessibilityLabel = provider.providerName + (mine ? ", one of your services" : "")
+    func configure(_ e: Episode, watched: Bool, aired: Bool, next: Bool, runtime: Int?) {
+        art.show(TMDB.imageURL(e.stillPath, .backdrop), name: nil)
+        label.setCaps("Episode \(e.episodeNumber)", kern: 0.6)
+        name.text = e.name
+        blurb.text = e.overview
+        let length = (e.runtime ?? runtime).map { "\($0)m" }
+        if !aired {
+            meta.text = e.airDate.flatMap(DateText.pretty).map { "Airs \($0)" } ?? "Coming soon"
+        } else if next {
+            meta.text = ["Up next", length].compactMap { $0 }.joined(separator: " · ")
+        } else {
+            meta.text = length
+        }
+        tick.isHidden = !watched
+        contentView.alpha = aired ? 1 : 0.55
+        accessibilityLabel = "Episode \(e.episodeNumber), \(e.name)" + (watched ? ", watched" : "") + (aired ? "" : ", not out yet")
+        accessibilityHint = aired ? (watched ? "Double tap to mark as not watched" : "Double tap to mark as watched") : nil
+    }
+
+    override var isHighlighted: Bool { didSet { Spring.press(self, isHighlighted, scale: 0.97) } }
+}
+
+/// "Season 2 ⌃⌄" with a menu of seasons, how many you've watched, and a slim bar per episode.
+final class SeasonHeader: UICollectionReusableView {
+    static let kind = "season-header"
+    let picker = UIButton(configuration: .plain())
+    private let count = UILabel.make(Theme.text(.footnote), Theme.secondary)
+    private let bars = UIStackView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        picker.configuration?.contentInsets = .zero
+        picker.configuration?.imagePlacement = .trailing
+        picker.configuration?.imagePadding = 6
+        picker.configuration?.image = UIImage(systemName: "chevron.up.chevron.down")?.withTintColor(Theme.secondary, renderingMode: .alwaysOriginal)
+        picker.configuration?.preferredSymbolConfigurationForImage = .init(pointSize: 13, weight: .bold)
+        picker.configuration?.baseForegroundColor = Theme.text
+        picker.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { a in
+            var a = a; a.font = Theme.text(.title2, weight: .semibold); return a
+        }
+        picker.showsMenuAsPrimaryAction = true
+        bars.spacing = 4
+        bars.distribution = .fillEqually
+        bars.heightAnchor.constraint(equalToConstant: 4).isActive = true
+        let top = UIStackView(arrangedSubviews: [picker, UIView(), count])
+        top.alignment = .firstBaseline
+        let stack = UIStackView(arrangedSubviews: [top, bars])
+        stack.axis = .vertical
+        stack.spacing = 8
+        addSubview(stack)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// `states`: per aired-or-not episode, 2 watched, 1 up next, 0 not yet.
+    func configure(season: Int, menu: UIMenu, states: [Int]) {
+        picker.configuration?.title = "Season \(season)"
+        picker.menu = menu
+        let watched = states.filter { $0 == 2 }.count
+        count.text = states.isEmpty ? nil : "\(watched) of \(states.count) watched"
+        bars.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        // Past about 30 episodes the bars are too thin to read; one bar shows the share instead.
+        let shown = states.count <= 30 ? states : []
+        for s in shown {
+            let bar = UIView()
+            bar.layer.cornerRadius = 2
+            bar.backgroundColor = s == 2 ? Theme.accent : s == 1 ? Theme.accent.withAlphaComponent(0.45) : UIColor(white: 0.47, alpha: 0.36)
+            bars.addArrangedSubview(bar)
+        }
+        bars.isHidden = shown.isEmpty
+        picker.accessibilityLabel = "Season \(season), \(count.text ?? ""). Choose season"
     }
 }
 
-/// A streaming service logo; yours get a lit ring and a check.
+/// A row in How to Watch: the service's logo, its name, and whether you have it.
+final class ProviderRowCell: UICollectionViewCell {
+    private let logo = UIImageView()
+    private let name = UILabel.make(Theme.text(.body))
+    private let note = UILabel.make(Theme.text(.footnote), Theme.secondary)
+    private let rule = UIView()
+    private let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentView.backgroundColor = Card.fill
+        contentView.layer.cornerCurve = .continuous
+        logo.layer.cornerRadius = 10
+        logo.clipsToBounds = true
+        logo.backgroundColor = Theme.surfaceHigh
+        chevron.tintColor = Theme.tertiary
+        chevron.preferredSymbolConfiguration = .init(pointSize: 13, weight: .semibold)
+        rule.backgroundColor = Card.rule
+        let text = UIStackView(arrangedSubviews: [name, note])
+        text.axis = .vertical
+        let row = UIStackView(arrangedSubviews: [logo, text, chevron])
+        row.spacing = 14
+        row.alignment = .center
+        [row, rule].forEach { contentView.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        NSLayoutConstraint.activate([
+            logo.widthAnchor.constraint(equalToConstant: 44), logo.heightAnchor.constraint(equalToConstant: 44),
+            row.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            row.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            row.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            rule.heightAnchor.constraint(equalToConstant: 0.5),
+            rule.topAnchor.constraint(equalTo: contentView.topAnchor),
+            rule.leadingAnchor.constraint(equalTo: text.leadingAnchor),
+            rule.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+        ])
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(_ provider: Provider, mine: Bool, first: Bool, last: Bool) {
+        logo.setImage(TMDB.imageURL(provider.logoPath, .logo))
+        name.text = provider.providerName
+        note.text = mine ? "On one of your services" : "Streaming"
+        note.textColor = mine ? Theme.accent : Theme.secondary
+        rule.isHidden = first
+        contentView.layer.cornerRadius = first || last ? 14 : 0
+        var corners: CACornerMask = []
+        if first { corners.formUnion([.layerMinXMinYCorner, .layerMaxXMinYCorner]) }
+        if last { corners.formUnion([.layerMinXMaxYCorner, .layerMaxXMaxYCorner]) }
+        contentView.layer.maskedCorners = corners
+        accessibilityLabel = "\(provider.providerName), \(note.text ?? "")"
+    }
+}
+
+/// A streaming service in Settings and onboarding: its logo, name, and a tick when it's yours.
 final class ProviderCell: UICollectionViewCell {
     private let logo = UIImageView()
     private let check = UIImageView(image: UIImage(systemName: "checkmark.circle.fill"))
@@ -166,327 +430,6 @@ final class ProviderCell: UICollectionViewCell {
         logo.alpha = mine ? 1 : 0.85
         accessibilityLabel = provider.providerName
         accessibilityTraits = mine ? [.button, .selected] : .button
-    }
-}
-
-/// An episode as a programme line: its number set big, the title, and a hole to punch.
-final class EpisodeCell: UICollectionViewCell {
-    let punch = PunchButton()
-    var onPunch: (() -> Void)?
-    private let number = UILabel.make(Theme.display(44, weight: .black))
-    private let name = UILabel.make(Theme.text(.headline, weight: .semibold), Theme.text, lines: 2)
-    private let detail = UILabel.make(Theme.text(.caption1), Theme.secondary, lines: 2)
-    private let rule = UIView()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        number.widthAnchor.constraint(equalToConstant: 56).isActive = true
-        let text = UIStackView(arrangedSubviews: [name, detail])
-        text.axis = .vertical
-        text.spacing = 3
-        let row = UIStackView(arrangedSubviews: [number, text, punch])
-        row.alignment = .center
-        row.spacing = 12
-        rule.backgroundColor = Theme.hairline
-        [row, rule].forEach { contentView.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
-        NSLayoutConstraint.activate([
-            row.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
-            row.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
-            row.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            rule.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            rule.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            rule.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            rule.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
-        ])
-        punch.addAction(UIAction { [weak self] _ in self?.onPunch?() }, for: .touchUpInside)
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    func configure(_ episode: Episode, watched: Bool, aired: Bool, next: Bool, accent: UIColor) {
-        number.text = String(format: "%02d", episode.episodeNumber)
-        number.textColor = next ? accent : watched ? Theme.tertiary : Theme.text
-        name.text = episode.name
-        var bits: [String] = []
-        if next { bits.append("Up next") }
-        if !aired { bits.append(episode.airDate.flatMap(DateText.pretty).map { "Airs \($0)" } ?? "Not aired yet") }
-        else if let runtime = episode.runtime { bits.append("\(runtime) min") }
-        if let date = episode.airDate.flatMap(DateText.pretty), aired { bits.append(date) }
-        detail.text = bits.joined(separator: " · ")
-        punch.accent = accent
-        punch.set(watched, animated: false)
-        punch.isEnabled = aired
-        punch.alpha = aired ? 1 : 0.3
-        punch.accessibilityLabel = "Episode \(episode.episodeNumber), \(episode.name)"
-        contentView.alpha = aired ? 1 : 0.55
-    }
-}
-
-/// "Where you are" in a film: the time, a strip to scrub, and what that means for tonight.
-/// While a Start now session runs for this film, the strip moves by itself and the button pauses or resumes it.
-final class FilmProgressCell: UICollectionViewCell {
-    var onCommit: ((Int) -> Void)?
-    var onFinished: (() -> Void)?
-    var onStart: ((Int) -> Void)?
-    var onPause: (() -> Void)?
-    var onResume: (() -> Void)?
-    let strip = FilmStripView()
-    private let caption = UILabel.make(Theme.label(), Theme.secondary)
-    private let percent = UILabel.make(Theme.label(.caption2, weight: .bold))
-    private let clock = UILabel.make(Theme.display(54, weight: .black))
-    private let total = UILabel.make(Theme.display(24, weight: .black), Theme.tertiary)
-    private let note = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 0)
-    private let primary = PillButton("Start now", image: "play.fill")
-    private let finished = PillButton("Finished it", inverted: true)
-    private let restart = UIButton(type: .system)
-    private var runtime = 0
-    private var live: WatchSession.State?
-    private var ticker: Timer?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        contentView.backgroundColor = UIColor(white: 1, alpha: 0.06)
-        contentView.layer.cornerRadius = 22
-        contentView.layer.cornerCurve = .continuous
-        contentView.layer.borderWidth = 1
-        contentView.layer.borderColor = UIColor(white: 1, alpha: 0.1).cgColor
-        let top = UIStackView(arrangedSubviews: [caption, UIView(), percent])
-        let time = UIStackView(arrangedSubviews: [clock, total, UIView()])
-        time.alignment = .lastBaseline
-        time.spacing = 8
-        strip.interactive = true
-        strip.heightAnchor.constraint(equalToConstant: 64).isActive = true
-        strip.addAction(UIAction { [weak self] _ in self?.scrubbed() }, for: .valueChanged)
-        strip.addAction(UIAction { [weak self] _ in self?.commit() }, for: .editingDidEnd)
-        primary.addAction(UIAction { [weak self] _ in self?.tapPrimary() }, for: .primaryActionTriggered)
-        finished.addAction(UIAction { [weak self] _ in self?.onFinished?() }, for: .primaryActionTriggered)
-        restart.setTitle("START OVER", for: .normal)
-        restart.titleLabel?.font = Theme.label(.caption2, weight: .bold)
-        restart.tintColor = Theme.secondary
-        restart.addAction(UIAction { [weak self] _ in
-            self?.strip.value = 0
-            self?.commit()
-        }, for: .primaryActionTriggered)
-        let buttons = UIStackView(arrangedSubviews: [primary, finished])
-        buttons.distribution = .fillEqually
-        buttons.spacing = 10
-        let stack = UIStackView(arrangedSubviews: [top, time, strip, note, buttons, restart])
-        stack.axis = .vertical
-        stack.spacing = 12
-        stack.setCustomSpacing(4, after: top)
-        stack.setCustomSpacing(16, after: note)
-        stack.setCustomSpacing(4, after: buttons)
-        contentView.addSubview(stack)
-        stack.pin(to: contentView, inset: 18)
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func prepareForReuse() {
-        super.prepareForReuse()
-        ticker?.invalidate()
-    }
-
-    func configure(position: Int, runtime: Int, accent: UIColor, live session: WatchSession.State?) {
-        self.runtime = runtime
-        live = session
-        strip.runtime = runtime
-        strip.tint = accent
-        percent.textColor = accent
-        total.text = "/ " + DateText.clock(runtime * 60)
-        strip.interactive = session == nil
-        ticker?.invalidate()
-        if let session {
-            caption.setCaps(session.pausedAt == nil ? "Now showing" : "Paused")
-            primary.configuration?.title = session.pausedAt == nil ? "Pause" : "Resume"
-            primary.configuration?.image = UIImage(systemName: session.pausedAt == nil ? "pause.fill" : "play.fill")
-            if session.pausedAt == nil {
-                ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.tick() } }
-            }
-            tick()
-        } else {
-            caption.setCaps("Where you are")
-            primary.configuration?.title = position > 0 ? "Resume" : "Start now"
-            primary.configuration?.image = UIImage(systemName: "play.fill")
-            if !strip.isTracking { strip.value = Double(position) / Double(max(runtime * 60, 1)) }
-            scrubbed()
-        }
-    }
-
-    private func tick() {
-        guard let live else { return }
-        strip.value = live.elapsed / Double(max(runtime * 60, 1))
-        let seconds = Int(live.elapsed)
-        clock.text = String(format: "%d:%02d:%02d", seconds / 3600, seconds % 3600 / 60, seconds % 60)
-        percent.setCaps("\(Int(strip.value * 100))%")
-        let left = max(runtime * 60 - seconds, 0) / 60
-        let ends = Date.now.addingTimeInterval(TimeInterval(left * 60)).formatted(.dateTime.hour().minute())
-        note.text = live.pausedAt == nil
-            ? "\(left) minutes left, ends \(ends). Pause from the Lock Screen if an ad or a break gets in the way."
-            : "Paused. The end time moves with you; resume when you're back."
-        restart.isHidden = true
-    }
-
-    private var seconds: Int { Int((strip.value * Double(runtime)).rounded()) * 60 }
-
-    private func scrubbed() {
-        guard live == nil else { return }
-        clock.text = DateText.clock(seconds)
-        percent.setCaps("\(Int(strip.value * 100))%")
-        let left = runtime - seconds / 60
-        restart.isHidden = seconds == 0
-        primary.configuration?.title = seconds > 0 ? "Resume" : "Start now"
-        if seconds == 0 {
-            note.text = "Not started. Tap Start now and it keeps time for you on the Lock Screen, or drag the strip to where you are."
-        } else {
-            let done = Date.now.addingTimeInterval(TimeInterval(left * 60)).formatted(.dateTime.hour().minute())
-            note.text = "\(left) minutes left. Start now and you're done by \(done)."
-        }
-    }
-
-    private func tapPrimary() {
-        guard let live else { onStart?(seconds); return }
-        live.pausedAt == nil ? onPause?() : onResume?()
-    }
-
-    private func commit() {
-        Haptics.soft()
-        // Dragging right to the end means you've finished it.
-        if strip.value >= 0.99 { onFinished?() } else { onCommit?(seconds) }
-    }
-}
-
-/// The punch card plus its totals, framed like a card from the box office.
-final class PunchCardCell: UICollectionViewCell {
-    let card = PunchCardView()
-    private let caption = UILabel.make(Theme.label(.caption2, weight: .bold))
-    private let fine = UILabel.make(Theme.label(.caption2), Theme.tertiary)
-    private let left = UILabel.make(Theme.display(34, weight: .black))
-    private let leftCaption = UILabel.make(Theme.label(.caption2), Theme.secondary)
-    private let share = UILabel.make(Theme.display(34, weight: .black))
-    private let shareCaption = UILabel.make(Theme.label(.caption2), Theme.secondary)
-    private let perforation = CAShapeLayer()
-    private let divider = CardView()
-    private let footer = UIStackView()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        contentView.layer.cornerRadius = 20
-        contentView.layer.cornerCurve = .continuous
-        contentView.layer.borderWidth = 1
-        caption.setCaps("Punch card")
-        fine.setCaps("Admit one per episode", kern: 1)
-        let top = UIStackView(arrangedSubviews: [caption, UIView(), fine])
-        top.alignment = .firstBaseline
-        leftCaption.textAlignment = .left
-        share.textAlignment = .right
-        shareCaption.textAlignment = .right
-        let a = UIStackView(arrangedSubviews: [left, leftCaption]); a.axis = .vertical; a.spacing = 2
-        let b = UIStackView(arrangedSubviews: [share, shareCaption]); b.axis = .vertical; b.spacing = 2; b.alignment = .trailing
-        [a, UIView(), b].forEach(footer.addArrangedSubview)
-        perforation.lineWidth = 2
-        perforation.lineDashPattern = [5, 4]
-        perforation.fillColor = nil
-        divider.layer.addSublayer(perforation)
-        divider.heightAnchor.constraint(equalToConstant: 2).isActive = true
-        divider.onLayout = { [weak self] b in
-            let p = UIBezierPath()
-            p.move(to: CGPoint(x: 0, y: b.midY)); p.addLine(to: CGPoint(x: b.maxX, y: b.midY))
-            self?.perforation.path = p.cgPath
-        }
-        let stack = UIStackView(arrangedSubviews: [top, card, divider, footer])
-        stack.axis = .vertical
-        stack.spacing = 16
-        contentView.addSubview(stack)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 18),
-            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
-        ])
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func systemLayoutSizeFitting(_ target: CGSize, withHorizontalFittingPriority h: UILayoutPriority, verticalFittingPriority v: UILayoutPriority) -> CGSize {
-        // The card's height follows its width, so measure it for the width we're given.
-        let cardHeight = PunchCardView.height(for: target.width - 32, rows: card.rows)
-        card.constraints.filter { $0.firstAttribute == .height }.forEach { card.removeConstraint($0) }
-        card.heightAnchor.constraint(equalToConstant: cardHeight).isActive = true
-        return super.systemLayoutSizeFitting(target, withHorizontalFittingPriority: h, verticalFittingPriority: v)
-    }
-
-    func configure(remaining: Int, minutes: Int, punched: Int, total: Int, accent: UIColor) {
-        contentView.backgroundColor = accent.withAlphaComponent(0.07)
-        contentView.layer.borderColor = accent.withAlphaComponent(0.28).cgColor
-        perforation.strokeColor = accent.withAlphaComponent(0.28).cgColor
-        caption.textColor = accent
-        share.textColor = accent
-        card.tint = accent
-        left.text = remaining == 0 ? "CAUGHT UP" : "\(remaining) LEFT"
-        leftCaption.setCaps(remaining == 0 ? "Every aired episode" : "About \(DateText.runtime(minutes))")
-        share.text = "\(total == 0 ? 0 : punched * 100 / total)%"
-        shareCaption.setCaps("Punched")
-    }
-}
-
-/// "Stay seated": what's waiting during and after the credits, as a dashed ticket.
-final class StingerCell: UICollectionViewCell {
-    private let caption = UILabel.make(Theme.label(.caption2, weight: .bold), Theme.accent)
-    private let title = UILabel.make(Theme.display(26, weight: .black), Theme.text, lines: 0)
-    private let detail = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 0)
-    private let count = UILabel.make(Theme.display(34, weight: .black), Theme.accent)
-    private let border = CAShapeLayer()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        contentView.backgroundColor = Theme.accent.withAlphaComponent(0.08)
-        contentView.layer.cornerRadius = 16
-        contentView.layer.cornerCurve = .continuous
-        border.fillColor = nil
-        border.lineWidth = 1.5
-        border.lineDashPattern = [5, 4]
-        border.strokeColor = Theme.accent.withAlphaComponent(0.45).cgColor
-        contentView.layer.addSublayer(border)
-        caption.setCaps("Stay seated")
-        let extra = UILabel.make(Theme.label(.caption2, weight: .bold), Theme.secondary)
-        extra.setCaps("Extra")
-        let stub = UIStackView(arrangedSubviews: [count, extra])
-        stub.axis = .vertical
-        stub.alignment = .center
-        stub.spacing = 2
-        stub.widthAnchor.constraint(equalToConstant: 62).isActive = true
-        let text = UIStackView(arrangedSubviews: [caption, title, detail])
-        text.axis = .vertical
-        text.spacing = 4
-        let row = UIStackView(arrangedSubviews: [text, stub])
-        row.alignment = .center
-        row.spacing = 12
-        contentView.addSubview(row)
-        row.pin(to: contentView, inset: 14)
-        isAccessibilityElement = true
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        border.path = UIBezierPath(roundedRect: contentView.bounds.insetBy(dx: 0.75, dy: 0.75), cornerRadius: 16).cgPath
-    }
-
-    func configure(mid: Bool, after: Bool) {
-        let n = (mid ? 1 : 0) + (after ? 1 : 0)
-        count.text = "\(n)"
-        switch (mid, after) {
-        case (true, true):
-            title.text = "SCENES DURING AND AFTER THE CREDITS"
-            detail.text = "One partway through, one at the very end. Don't leave early."
-        case (true, false):
-            title.text = "A SCENE DURING THE CREDITS"
-            detail.text = "Hang on through the first part of the credits."
-        default:
-            title.text = "A SCENE AFTER THE CREDITS"
-            detail.text = "Wait for the very end."
-        }
-        accessibilityLabel = "Stay seated. " + (title.text ?? "").capitalized + ". " + (detail.text ?? "")
     }
 }
 
