@@ -82,6 +82,24 @@ nonisolated struct Provider: Decodable, Hashable, Sendable {
     let providerName: String
     let logoPath: String?
     let displayPriority: Int?
+
+    /// The service's own search for a title, so a tap lands in its app (or site) rather than on TMDB.
+    /// TMDB doesn't give per-service links; unknown services return nil and fall back to TMDB's page.
+    func searchURL(for title: String) -> URL? {
+        let q = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? title
+        let name = providerName.lowercased()
+        // Channels sold through another store open in that store, so check those first.
+        let search: [(String, String)] = [
+            ("amazon", "https://www.primevideo.com/search?phrase="), ("prime video", "https://www.primevideo.com/search?phrase="),
+            ("apple tv", "https://tv.apple.com/search?term="), ("netflix", "https://www.netflix.com/search?q="),
+            ("disney", "https://www.disneyplus.com/search?q="), ("paramount", "https://www.paramountplus.com/search/?q="),
+            ("hulu", "https://www.hulu.com/search?q="), ("peacock", "https://www.peacocktv.com/search?q="),
+            ("max", "https://play.max.com/search?q="), ("crunchyroll", "https://www.crunchyroll.com/search?q="),
+            ("iplayer", "https://www.bbc.co.uk/iplayer/search?q="), ("itvx", "https://www.itv.com/watch/search?q="),
+            ("channel 4", "https://www.channel4.com/search?q="), ("now", "https://www.nowtv.com/search?q="),
+        ]
+        return search.first { name.hasPrefix($0.0) || name.contains(" \($0.0)") || name.contains($0.0 + " ") }.flatMap { URL(string: $0.1 + q) }
+    }
 }
 
 nonisolated struct RegionProviders: Decodable, Sendable {

@@ -538,8 +538,8 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         guard let selected = dataSource.itemIdentifier(for: indexPath) else { return }
         switch selected {
         case .episode(let e): toggle(e)
-        case .provider:
-            if let link = detail?.providers[Prefs.region]?.link, let url = URL(string: link) { UIApplication.shared.open(url) }
+        case .provider(let p):
+            if let url = p.searchURL(for: item.name) ?? detail?.providers[Prefs.region]?.link.flatMap(URL.init(string:)) { UIApplication.shared.open(url) }
         case .title(let t):
             openDetail(t) { [weak self] in
                 self?.dataSource.indexPath(for: selected).flatMap { collectionView.cellForItem(at: $0) }
