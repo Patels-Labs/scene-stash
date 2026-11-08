@@ -77,11 +77,22 @@ final class SectionHeader: UICollectionReusableView {
     }
 }
 
+/// The app's one motion curve. Critically damped by default, starts from wherever the view is now, and never
+/// blocks touches, so anything can be grabbed or reversed part-way through. Save bounce for something thrown.
 enum Spring {
-    static func press(_ view: UIView, _ down: Bool, scale: CGFloat = 0.96) {
-        UIView.animate(withDuration: 0.4, delay: 0, usingSpringWithDamping: 0.6, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState]) {
-            view.transform = down ? CGAffineTransform(scaleX: scale, y: scale) : .identity
+    static func move(response: TimeInterval = 0.4, bounce: CGFloat = 0, _ changes: @escaping () -> Void, completion: ((Bool) -> Void)? = nil) {
+        let options: UIView.AnimationOptions = [.allowUserInteraction, .beginFromCurrentState]
+        if UIAccessibility.isReduceMotionEnabled {
+            UIView.animate(withDuration: 0.2, delay: 0, options: options, animations: changes, completion: completion)
+        } else {
+            UIView.animate(springDuration: response, bounce: bounce, initialSpringVelocity: 0, delay: 0, options: options, animations: changes, completion: completion)
         }
+    }
+
+    /// Shows the touch the moment it lands, and lets go a little slower.
+    static func press(_ view: UIView, _ down: Bool, scale: CGFloat = 0.97) {
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        move(response: down ? 0.12 : 0.3) { view.transform = down ? CGAffineTransform(scaleX: scale, y: scale) : .identity }
     }
 }
 
