@@ -233,3 +233,9 @@ enum Layouts {
         NSCollectionLayoutBoundarySupplementaryItem(layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .estimated(48)), elementKind: SectionHeader.kind, alignment: .top)
     }
 }
+
+/// A plain view that reports its layout, for layers that follow its size.
+final class CardView: UIView {
+    var onLayout: ((CGRect) -> Void)?
+    override func layoutSubviews() { super.layoutSubviews(); onLayout?(bounds) }
+}

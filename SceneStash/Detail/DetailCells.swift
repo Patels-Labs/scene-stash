@@ -292,7 +292,7 @@ final class FilmProgressCell: UICollectionViewCell {
         strip.runtime = runtime
         strip.tint = accent
         percent.textColor = accent
-        total.text = "/ " + ProgrammeCell.clock(runtime * 60)
+        total.text = "/ " + DateText.clock(runtime * 60)
         strip.interactive = session == nil
         ticker?.invalidate()
         if let session {
@@ -330,7 +330,7 @@ final class FilmProgressCell: UICollectionViewCell {
 
     private func scrubbed() {
         guard live == nil else { return }
-        clock.text = ProgrammeCell.clock(seconds)
+        clock.text = DateText.clock(seconds)
         percent.setCaps("\(Int(strip.value * 100))%")
         let left = runtime - seconds / 60
         restart.isHidden = seconds == 0
@@ -501,6 +501,11 @@ enum DateText {
     static func date(_ string: String) -> Date? { parser.date(from: string) }
     static func pretty(_ string: String) -> String? { date(string)?.formatted(.dateTime.month(.abbreviated).day().year()) }
     static func isPast(_ string: String?) -> Bool { string.flatMap(date).map { $0 <= .now } ?? false }
+
+    /// "1:34" for a position in seconds.
+    static func clock(_ seconds: Int) -> String {
+        String(format: "%d:%02d", seconds / 3600, seconds % 3600 / 60)
+    }
 
     static func runtime(_ minutes: Int) -> String {
         minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
