@@ -33,7 +33,7 @@ enum Theme {
     static func applyAppearance() {
         let nav = UINavigationBarAppearance()
         nav.configureWithTransparentBackground()
-        nav.largeTitleTextAttributes = [.font: display(42, weight: .black), .foregroundColor: text]
+        nav.largeTitleTextAttributes = [.font: text(.largeTitle, weight: .bold), .foregroundColor: text]
         nav.titleTextAttributes = [.font: text(.headline, weight: .semibold), .foregroundColor: text]
         UINavigationBar.appearance().standardAppearance = nav
         UINavigationBar.appearance().scrollEdgeAppearance = nav
