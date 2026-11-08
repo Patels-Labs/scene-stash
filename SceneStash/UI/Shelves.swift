@@ -430,23 +430,31 @@ final class HeroView: UIView {
         shade.frame = art.bounds
     }
 
-    /// Shows the art and title; swaps the name for the title's logo once TMDB has one.
+    /// Shows the art and title, then swaps in text-free art and the title's logo once TMDB has them.
     func show(_ title: Title, poster: String? = nil, meta text: String?) {
         art.setImage(TMDB.imageURL(poster ?? title.posterPath, .hero))
         name.text = title.name
+        name.isHidden = false
+        logo.isHidden = true
         meta.text = text
         meta.isHidden = text == nil
         logoTask?.cancel()
         logoTask = Task { [weak self] in
-            guard let path = await TMDB.shared.logo(title.id, title.mediaType), let url = TMDB.imageURL(path, .posterLarge),
-                  let image = await ImageLoader.shared.image(url), !Task.isCancelled, let self else { return }
+            let artwork = await TMDB.shared.artwork(title.id, title.mediaType)
+            guard !Task.isCancelled, let self else { return }
+            if poster == nil, let clean = TMDB.imageURL(artwork.poster, .hero), let image = await ImageLoader.shared.image(clean), !Task.isCancelled {
+                UIView.transition(with: art, duration: 0.3, options: .transitionCrossDissolve) { self.art.image = image }
+            }
+            guard let url = TMDB.imageURL(artwork.logo, .posterLarge), let image = await ImageLoader.shared.image(url), !Task.isCancelled else { return }
             logo.image = image
-            let ratio = image.size.width / max(image.size.height, 1)
-            logo.widthAnchor.constraint(equalTo: logo.heightAnchor, multiplier: ratio).isActive = true
+            logoRatio?.isActive = false
+            logoRatio = logo.widthAnchor.constraint(equalTo: logo.heightAnchor, multiplier: image.size.width / max(image.size.height, 1))
+            logoRatio?.isActive = true
             logo.isHidden = false
             name.isHidden = true
             logo.accessibilityLabel = title.name
             logo.isAccessibilityElement = true
         }
     }
+    private var logoRatio: NSLayoutConstraint?
 }
