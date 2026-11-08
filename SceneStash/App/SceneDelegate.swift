@@ -16,6 +16,10 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             UISearchTab { _ in Self.nav(DiscoverViewController()) },
         ])
         window.rootViewController = tabs
+        #if DEBUG
+        // Local previews: `-StartTab nights` opens on that tab, so each screen can be checked without clicking.
+        if let start = UserDefaults.standard.string(forKey: "StartTab") { tabs.selectedTab = tabs.tabs.first { $0.identifier == start } }
+        #endif
         window.makeKeyAndVisible()
         Task { await Store.shared.backfillRuntimes() }
         self.window = window
