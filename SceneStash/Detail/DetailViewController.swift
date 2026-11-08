@@ -101,8 +101,6 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
 
     private func buildHero() {
         hero.show(item, meta: nil)
-        primary.widthAnchor.constraint(equalToConstant: 255).isActive = true
-        secondary.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
         let row = UIStackView(arrangedSubviews: [secondary, trailer, status])
         row.spacing = 10
         row.alignment = .center
@@ -113,7 +111,8 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         hero.content.setCustomSpacing(10, after: primary)
         hero.content.setCustomSpacing(18, after: row)
         hero.content.setCustomSpacing(8, after: overview)
-        [overview, info].forEach { $0.widthAnchor.constraint(equalTo: hero.content.widthAnchor).isActive = true }
+        // Both rows of buttons run the full width, so their edges line up.
+        [primary, row, overview, info].forEach { $0.widthAnchor.constraint(equalTo: hero.content.widthAnchor).isActive = true }
 
         primary.addAction(UIAction { [weak self] _ in self?.primaryTapped() }, for: .primaryActionTriggered)
         secondary.addAction(UIAction { [weak self] _ in

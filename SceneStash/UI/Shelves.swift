@@ -362,6 +362,7 @@ enum CapsuleButton {
         c.title = title
         c.image = image.flatMap { UIImage(systemName: $0) }
         c.imagePadding = 8
+        c.titleLineBreakMode = .byTruncatingTail
         c.preferredSymbolConfigurationForImage = .init(pointSize: 15, weight: .semibold)
         c.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { a in
             var a = a; a.font = Theme.text(.body, weight: .semibold); return a
