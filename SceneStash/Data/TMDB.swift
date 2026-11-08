@@ -214,7 +214,7 @@ extension Reel {
 }
 
 enum ImageSize: String {
-    case poster = "w342", posterLarge = "w500", backdrop = "w1280", still = "w300", profile = "w185", logo = "w92"
+    case poster = "w342", posterLarge = "w500", hero = "w780", backdrop = "w1280", still = "w300", profile = "w185", logo = "w92"
 }
 
 enum TMDBError: LocalizedError {
@@ -292,6 +292,18 @@ final class TMDB {
         let c: Collection = try await get("collection/\(id)")
         return c.parts.filter { DateText.isPast($0.date) }.sorted { ($0.date ?? "") < ($1.date ?? "") }
     }
+
+    /// A title's logo artwork in English (or with no text), for the top of its page. Remembered per title.
+    func logo(_ id: Int, _ type: MediaType) async -> String? {
+        let key = "\(type.rawValue)/\(id)"
+        if let hit = logos[key] { return hit }
+        struct Images: Decodable { struct Image: Decodable { let filePath: String; let iso6391: String? }; let logos: [Image] }
+        let images: Images? = try? await get("\(key)/images", ["include_image_language": "en,null"])
+        let path = images?.logos.first { $0.iso6391 == "en" }?.filePath ?? images?.logos.first?.filePath
+        logos[key] = .some(path)
+        return path
+    }
+    private var logos: [String: String?] = [:]
 
     func regions() async throws -> [Region] {
         let page: Page<Region> = try await get("watch/providers/regions")
