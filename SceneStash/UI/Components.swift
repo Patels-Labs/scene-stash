@@ -77,59 +77,6 @@ final class SectionHeader: UICollectionReusableView {
     }
 }
 
-/// Poster thumbnail with a printed-card edge, springy press and status badge.
-final class PosterCell: UICollectionViewCell {
-    let imageView = UIImageView()
-    private let badge = UIImageView()
-    private let fallback = UILabel.make(Theme.display(20), Theme.secondary, lines: 4)
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        imageView.contentMode = .scaleAspectFill
-        imageView.clipsToBounds = true
-        imageView.layer.cornerRadius = 12
-        imageView.layer.cornerCurve = .continuous
-        imageView.layer.borderWidth = 1
-        imageView.layer.borderColor = UIColor(white: 1, alpha: 0.1).cgColor
-        imageView.backgroundColor = Theme.surface
-        contentView.addSubview(imageView)
-        imageView.pin(to: contentView)
-
-        fallback.textAlignment = .center
-        imageView.addSubview(fallback)
-        fallback.pin(to: imageView, inset: 10)
-
-        badge.tintColor = .black
-        badge.backgroundColor = Theme.accent
-        badge.contentMode = .center
-        badge.preferredSymbolConfiguration = .init(pointSize: 10, weight: .heavy)
-        badge.layer.cornerRadius = 11
-        badge.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(badge)
-        NSLayoutConstraint.activate([
-            badge.widthAnchor.constraint(equalToConstant: 22), badge.heightAnchor.constraint(equalToConstant: 22),
-            badge.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 7),
-            badge.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -7),
-        ])
-        isAccessibilityElement = true
-        accessibilityTraits = .button
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    func configure(_ title: Title) {
-        imageView.setImage(TMDB.imageURL(title.posterPath, .poster))
-        fallback.text = title.posterPath == nil ? title.name.uppercased() : nil
-        let status = Store.shared.tracked(title.id, title.mediaType)?.status
-        badge.image = status.map { UIImage(systemName: $0.symbol) } ?? nil
-        badge.isHidden = status == nil
-        accessibilityLabel = [title.name, title.year, status?.label].compactMap { $0 }.joined(separator: ", ")
-    }
-
-    override var isHighlighted: Bool {
-        didSet { Spring.press(self, isHighlighted, scale: 0.95) }
-    }
-}
-
 enum Spring {
     static func press(_ view: UIView, _ down: Bool, scale: CGFloat = 0.96) {
         UIView.animate(withDuration: 0.4, delay: 0, usingSpringWithDamping: 0.6, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState]) {
