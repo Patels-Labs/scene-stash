@@ -201,15 +201,19 @@ nonisolated struct Reel: Hashable {
 }
 
 extension Reel {
-    static let featured = Reel(name: "Trending this week", path: "trending/all/week")
-    static let discover: [Reel] = [
-        Reel(name: "Now in cinemas", path: "movie/now_playing", caption: "On the big screen"),
-        Reel(name: "Bingeable", path: "tv/top_rated", caption: "Clear your weekend"),
-        Reel(name: "Mind benders", path: "discover/movie", query: ["with_genres": "878|9648", "sort_by": "vote_count.desc"], caption: "Sci-fi & mystery"),
-        Reel(name: "Lights off", path: "discover/movie", query: ["with_genres": "27", "sort_by": "popularity.desc"], caption: "Horror"),
-        Reel(name: "Animated worlds", path: "discover/tv", query: ["with_genres": "16", "sort_by": "popularity.desc"], caption: "Animation"),
-        Reel(name: "Laugh track", path: "discover/tv", query: ["with_genres": "35", "sort_by": "popularity.desc"], caption: "Comedy"),
-        Reel(name: "Crime nights", path: "discover/tv", query: ["with_genres": "80", "sort_by": "popularity.desc"], caption: "Crime"),
+    static let featured = Reel(name: "Trending", path: "trending/all/week")
+    /// Search's Browse tiles.
+    static let browse: [Reel] = [
+        Reel(name: "In Cinemas Now", path: "movie/now_playing"),
+        Reel(name: "Coming Soon", path: "movie/upcoming"),
+        Reel(name: "Top TV", path: "tv/top_rated"),
+        Reel(name: "Sci-Fi & Mystery", path: "discover/movie", query: ["with_genres": "878|9648", "sort_by": "vote_count.desc"]),
+        Reel(name: "Horror", path: "discover/movie", query: ["with_genres": "27", "sort_by": "popularity.desc"]),
+        Reel(name: "Comedy", path: "discover/tv", query: ["with_genres": "35", "sort_by": "popularity.desc"]),
+        Reel(name: "Crime", path: "discover/tv", query: ["with_genres": "80", "sort_by": "popularity.desc"]),
+        Reel(name: "Animation", path: "discover/tv", query: ["with_genres": "16", "sort_by": "popularity.desc"]),
+        // TMDB's community keywords for scenes during and after the credits.
+        Reel(name: "After-Credits Scenes", path: "discover/movie", query: ["with_keywords": "179430|179431", "sort_by": "popularity.desc"]),
     ]
 }
 
