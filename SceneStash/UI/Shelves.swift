@@ -432,12 +432,17 @@ final class HeroView: UIView {
 
     /// Shows the art and title, then swaps in text-free art and the title's logo once TMDB has them.
     func show(_ title: Title, poster: String? = nil, meta text: String?) {
+        meta.text = text
+        meta.isHidden = text == nil
+        // Same title again (a refresh, the clock ticking): only the words move. Redrawing the art
+        // would flash the text-on poster back in before the clean one fades over it.
+        let key = "\(title.mediaType)\(title.id)/\(poster ?? "")"
+        guard key != shown else { return }
+        shown = key
         art.setImage(TMDB.imageURL(poster ?? title.posterPath, .hero))
         name.text = title.name
         name.isHidden = false
         logo.isHidden = true
-        meta.text = text
-        meta.isHidden = text == nil
         logoTask?.cancel()
         logoTask = Task { [weak self] in
             let artwork = await TMDB.shared.artwork(title.id, title.mediaType)
@@ -457,6 +462,7 @@ final class HeroView: UIView {
         }
     }
     private var logoRatio: NSLayoutConstraint?
+    private var shown: String?
 }
 
 /// A screen with nothing on it yet: a title and a line saying how to fill it.
