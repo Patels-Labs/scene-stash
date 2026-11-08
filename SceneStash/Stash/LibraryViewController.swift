@@ -53,10 +53,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDelegate {
     private func makeLayout() -> UICollectionViewLayout {
         UICollectionViewCompositionalLayout { [weak self] index, _ in
             switch self?.dataSource?.sectionIdentifier(for: index) {
-            case .watching, .marathons: return Shelf.wides(captions: 2)
+            case .watching: return Shelf.wides(captions: 1)
+            case .marathons: return Shelf.wides(captions: 2)
             case .extras: return Shelf.wides()
             case .watchlist: return Shelf.posters()
-            case .watched: return Shelf.posters(captions: 2)
+            case .watched: return Shelf.posters(captions: 1)
             case .stats, .empty, nil:
                 let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(40))
                 let s = NSCollectionLayoutSection(group: .vertical(layoutSize: size, subitems: [.init(layoutSize: size)]))
@@ -67,15 +68,9 @@ final class LibraryViewController: UIViewController, UICollectionViewDelegate {
     }
 
     private func configureDataSource() {
-        let statsReg = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { cell, _, _ in
+        let statsReg = UICollectionView.CellRegistration<EmptyCell, Item> { cell, _, _ in
             let s = Store.shared.stats()
-            var c = UIListContentConfiguration.cell()
-            c.text = "\(s.minutes / 60) hours · \(s.films) films · \(s.episodes) episodes" + (s.streak > 1 ? " · \(s.streak)-day streak" : "")
-            c.textProperties.font = Theme.text(.subheadline)
-            c.textProperties.color = Theme.secondary
-            c.directionalLayoutMargins = .zero
-            cell.contentConfiguration = c
-            cell.backgroundConfiguration = .clear()
+            cell.configure(nil, "\(s.minutes / 60) hours · \(s.films) films · \(s.episodes) episodes" + (s.streak > 1 ? " · \(s.streak)-day streak" : ""))
         }
         let emptyReg = UICollectionView.CellRegistration<EmptyCell, Item> { cell, _, _ in
             cell.configure("Nothing here yet", "Add films and shows from Search, or from Tonight, and they'll collect here.")
@@ -100,7 +95,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDelegate {
             case .watched(let t):
                 let tracked = Store.shared.tracked(t.id, t.mediaType)
                 let rating = Int(tracked?.rating ?? 0)
-                cell.configure(t, caption: t.name, detail: rating > 0 ? "Rated \(rating)" : tracked?.watchedAt?.formatted(.dateTime.month(.abbreviated).year()),
+                cell.configure(t, detail: rating > 0 ? "Rated \(rating)" : tracked?.watchedAt?.formatted(.dateTime.month(.abbreviated).year()),
                                tint: rating > 0 ? Theme.accent : nil)
             default: break
             }
@@ -134,11 +129,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDelegate {
         if t.mediaType == .movie, let tracked, tracked.runtime > 0 {
             let left = max(Int(tracked.runtime) - Int(tracked.position) / 60, 0)
             return .init(backdrop: TMDB.imageURL(t.backdropPath, .backdrop), title: t.name, meta: "\(DateText.runtime(left)) left",
-                         progress: Double(tracked.position) / Double(max(tracked.runtime * 60, 1)), caption: t.name, detail: "Film")
+                         progress: Double(tracked.position) / Double(max(tracked.runtime * 60, 1)), caption: "Film")
         }
         let count = Store.shared.episodes(show: t.id).count
-        return .init(backdrop: TMDB.imageURL(t.backdropPath, .backdrop), title: t.name, caption: t.name,
-                     detail: count == 0 ? "Not started" : "\(count) episode\(count == 1 ? "" : "s") watched")
+        return .init(backdrop: TMDB.imageURL(t.backdropPath, .backdrop), title: t.name,
+                     caption: count == 0 ? "Not started" : "\(count) episode\(count == 1 ? "" : "s") watched")
     }
 
     private static func extra(_ e: Extra) -> WideLockup.Model {

@@ -475,9 +475,10 @@ final class EmptyCell: UICollectionViewCell {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(_ title: String, _ body: String) {
+    func configure(_ title: String?, _ body: String) {
         self.title.text = title
+        self.title.isHidden = title == nil
         self.body.text = body
-        accessibilityLabel = "\(title). \(body)"
+        accessibilityLabel = [title, body].compactMap { $0 }.joined(separator: ". ")
     }
 }
