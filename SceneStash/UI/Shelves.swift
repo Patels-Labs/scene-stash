@@ -386,14 +386,17 @@ final class HeroView: UIView {
     let content = UIStackView()
     private let shade = CAGradientLayer()
     private var logoTask: Task<Void, Never>?
+    /// How far the buttons sit above the art's bottom edge; more when something else lives there.
+    private(set) lazy var contentBottom = content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -20)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         art.contentMode = .scaleAspectFill
         art.clipsToBounds = true
         art.backgroundColor = Theme.surface
-        shade.colors = [UIColor(white: 0, alpha: 0.35), .clear, .clear, UIColor(white: 0, alpha: 0.85), .black].map(\.cgColor)
-        shade.locations = [0, 0.18, 0.45, 0.8, 1]
+        // Stops short of black: the art ends on a clean edge rather than dissolving into the page.
+        shade.colors = [UIColor(white: 0, alpha: 0.35), .clear, .clear, UIColor(white: 0, alpha: 0.72), UIColor(white: 0, alpha: 0.9)].map(\.cgColor)
+        shade.locations = [0, 0.18, 0.38, 0.72, 1]
         art.layer.addSublayer(shade)
         logo.contentMode = .scaleAspectFit
         logo.isHidden = true
@@ -410,18 +413,18 @@ final class HeroView: UIView {
             art.topAnchor.constraint(equalTo: topAnchor),
             art.leadingAnchor.constraint(equalTo: leadingAnchor),
             art.trailingAnchor.constraint(equalTo: trailingAnchor),
-            art.heightAnchor.constraint(equalTo: art.widthAnchor, multiplier: 1.5),
+            art.bottomAnchor.constraint(equalTo: bottomAnchor),
+            art.heightAnchor.constraint(greaterThanOrEqualTo: art.widthAnchor, multiplier: 1.5),
             logo.widthAnchor.constraint(lessThanOrEqualToConstant: 280),
             logo.heightAnchor.constraint(lessThanOrEqualToConstant: 110),
             logo.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
             content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Shelf.margin),
             content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Shelf.margin),
-            // Overlaps the bottom of the art, and pushes the view taller if there's a lot to say.
-            content.topAnchor.constraint(greaterThanOrEqualTo: art.bottomAnchor, constant: -250),
-            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            bottomAnchor.constraint(greaterThanOrEqualTo: art.bottomAnchor),
+            contentBottom,
+            // The art stays 2:3 unless there's a lot to say, then it grows to keep the words on it.
+            content.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 110),
         ])
-        let hug = content.topAnchor.constraint(equalTo: art.bottomAnchor, constant: -250)
+        let hug = art.heightAnchor.constraint(equalTo: art.widthAnchor, multiplier: 1.5)
         hug.priority = .defaultLow
         hug.isActive = true
     }
