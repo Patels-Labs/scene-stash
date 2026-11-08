@@ -301,6 +301,8 @@ final class CircleLockup: UICollectionViewCell {
         captions.set(name, detail)
         accessibilityLabel = [name, detail].compactMap { $0 }.joined(separator: ", ")
     }
+
+    override var isHighlighted: Bool { didSet { Spring.press(self, isHighlighted) } }
 }
 
 /// A small frosted label, for a status on top of artwork.
