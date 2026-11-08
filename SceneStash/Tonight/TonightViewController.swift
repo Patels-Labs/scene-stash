@@ -58,6 +58,8 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         navigationItem.largeTitleDisplayMode = .never
         navigationController?.setNavigationBarHidden(true, animated: false)
         collectionView.backgroundColor = .clear
+        // The hero's logo arrives after the first layout; without this the cell keeps its old height and squeezes it to nothing.
+        collectionView.selfSizingInvalidation = .enabledIncludingConstraints
         // The hero's art runs up under the status bar, like the TV app.
         collectionView.contentInsetAdjustmentBehavior = .never
         collectionView.contentInset.bottom = 100

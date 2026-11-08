@@ -41,6 +41,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         }]))
 
         collectionView.backgroundColor = .clear
+        collectionView.selfSizingInvalidation = .enabledIncludingConstraints
         collectionView.delegate = self
         // The art runs up under the navigation bar, like the TV app.
         collectionView.contentInsetAdjustmentBehavior = .never

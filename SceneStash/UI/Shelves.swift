@@ -413,6 +413,7 @@ final class HeroView: UIView {
             art.heightAnchor.constraint(equalTo: art.widthAnchor, multiplier: 1.5),
             logo.widthAnchor.constraint(lessThanOrEqualToConstant: 280),
             logo.heightAnchor.constraint(lessThanOrEqualToConstant: 110),
+            logo.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
             content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Shelf.margin),
             content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Shelf.margin),
             // Overlaps the bottom of the art, and pushes the view taller if there's a lot to say.
