@@ -1,373 +1,251 @@
 import UIKit
 
-final class StashViewController: UIViewController, UICollectionViewDelegate {
-    nonisolated private enum Section: Hashable { case header, cards }
-    nonisolated private enum Item: Hashable { case header, card(Title), empty }
+/// Your library as shelves: what you're watching, your watchlist, what you've watched, marathons and extras.
+final class LibraryViewController: UIViewController, UICollectionViewDelegate {
+    nonisolated private enum Section: Hashable { case stats, watching, watchlist, watched, marathons, extras, empty }
+    nonisolated private enum Extra: Hashable { case year, history, alerts }
+    nonisolated private enum Item: Hashable {
+        case stats, empty
+        case watching(Title), watchlist(Title), watched(Title)
+        case marathon(String), extra(Extra)
+    }
 
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
-    private let header = StashHeader()
-    private var status: TrackStatus { TrackStatus.shelfOrder[header.shelves.selectedIndex] }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "Stash"
+        title = "Library"
         installBackdrop()
         navigationItem.largeTitleDisplayMode = .always
-        navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "gearshape"), primaryAction: UIAction { [weak self] _ in
-            self?.present(UINavigationController(rootViewController: SettingsViewController()), animated: true)
-        })
-        navigationItem.rightBarButtonItem?.accessibilityLabel = "Settings"
-        let extras = UIBarButtonItem(image: UIImage(systemName: "sparkles"), menu: UIMenu(children: [
-            UIAction(title: "The stub book", image: UIImage(systemName: "ticket")) { [weak self] _ in
-                self?.withPass { self?.navigationController?.pushViewController(StubBookViewController(), animated: true) }
-            },
-            UIAction(title: "Your year, on film", image: UIImage(systemName: "film.stack")) { [weak self] _ in
-                self?.withPass { self?.present(YearViewController(), animated: true) }
-            },
-            UIAction(title: "Marathons", image: UIImage(systemName: "calendar.badge.clock")) { [weak self] _ in
-                self?.withPass { self?.navigationController?.pushViewController(MarathonListViewController(), animated: true) }
-            },
-        ]))
-        extras.accessibilityLabel = "Extras"
-        navigationItem.rightBarButtonItems = [navigationItem.rightBarButtonItem!, extras]
-        header.shelves.addAction(UIAction { [weak self] _ in Haptics.tap(); self?.reload(animated: true) }, for: .valueChanged)
-
         collectionView.backgroundColor = .clear
         collectionView.delegate = self
+        collectionView.contentInset.bottom = 100
         view.addSubview(collectionView)
         collectionView.pin(to: view)
         configureDataSource()
         NotificationCenter.default.addObserver(self, selector: #selector(storeChanged), name: .NSManagedObjectContextObjectsDidChange, object: Store.shared.context)
-        // Open on whichever shelf has something on it.
-        header.shelves.selectedIndex = TrackStatus.shelfOrder.firstIndex { !Store.shared.all($0).isEmpty } ?? 0
-        reload(animated: false)
+        reload()
     }
 
-    @objc private func storeChanged() { reload(animated: true) }
+    @objc private func storeChanged() { reload() }
 
-    private func reload(animated: Bool) {
-        header.update(stats: Store.shared.stats(), days: Store.shared.watchDays(),
-                      counts: TrackStatus.shelfOrder.map { Store.shared.all($0).count })
+    private func reload() {
         var snap = NSDiffableDataSourceSnapshot<Section, Item>()
-        snap.appendSections([.header, .cards])
-        snap.appendItems([.header], toSection: .header)
-        let items = Store.shared.all(status).map { Item.card($0.title) }
-        snap.appendItems(items.isEmpty ? [.empty] : items, toSection: .cards)
-        let existing = Set(dataSource.snapshot().itemIdentifiers)
-        snap.reconfigureItems(items.filter(existing.contains))
-        dataSource.apply(snap, animatingDifferences: animated && !UIAccessibility.isReduceMotionEnabled)
+        let all = Store.shared.all()
+        if all.isEmpty {
+            snap.appendSections([.empty]); snap.appendItems([.empty])
+        } else {
+            snap.appendSections([.stats]); snap.appendItems([.stats])
+        }
+        let shelves: [(Section, TrackStatus, (Title) -> Item)] = [(.watching, .watching, Item.watching), (.watchlist, .watchlist, Item.watchlist), (.watched, .seen, Item.watched)]
+        for (section, status, item) in shelves {
+            let titles = Store.shared.all(status).prefix(20).map(\.title)
+            if !titles.isEmpty { snap.appendSections([section]); snap.appendItems(titles.map(item)) }
+        }
+        let marathons = Store.shared.marathons().compactMap(\.uuid)
+        if !marathons.isEmpty { snap.appendSections([.marathons]); snap.appendItems(marathons.map(Item.marathon)) }
+        if !all.isEmpty { snap.appendSections([.extras]); snap.appendItems([.extra(.year), .extra(.history), .extra(.alerts)]) }
+        snap.reconfigureItems(snap.itemIdentifiers.filter { Set(dataSource.snapshot().itemIdentifiers).contains($0) })
+        dataSource.apply(snap, animatingDifferences: view.window != nil && !UIAccessibility.isReduceMotionEnabled)
     }
 
     private func makeLayout() -> UICollectionViewLayout {
         UICollectionViewCompositionalLayout { [weak self] index, _ in
-            let single = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(300))
-            if index == 0 || self?.dataSource?.snapshot().itemIdentifiers(inSection: .cards) == [.empty] {
-                let s = NSCollectionLayoutSection(group: .vertical(layoutSize: single, subitems: [NSCollectionLayoutItem(layoutSize: single)]))
-                s.contentInsets = .init(top: 4, leading: 20, bottom: 26, trailing: 20)
+            switch self?.dataSource?.sectionIdentifier(for: index) {
+            case .watching, .marathons: return Shelf.wides(captions: 2)
+            case .extras: return Shelf.wides()
+            case .watchlist: return Shelf.posters()
+            case .watched: return Shelf.posters(captions: 2)
+            case .stats, .empty, nil:
+                let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(40))
+                let s = NSCollectionLayoutSection(group: .vertical(layoutSize: size, subitems: [.init(layoutSize: size)]))
+                s.contentInsets = .init(top: 0, leading: Shelf.margin, bottom: 24, trailing: Shelf.margin)
                 return s
             }
-            let item = NSCollectionLayoutItem(layoutSize: .init(widthDimension: .fractionalWidth(0.5), heightDimension: .estimated(330)))
-            item.contentInsets = .init(top: 0, leading: 9, bottom: 0, trailing: 9)
-            let group = NSCollectionLayoutGroup.horizontal(layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .estimated(330)), subitems: [item, item])
-            let s = NSCollectionLayoutSection(group: group)
-            s.interGroupSpacing = 26
-            s.contentInsets = .init(top: 0, leading: 11, bottom: 40, trailing: 11)
-            return s
         }
     }
 
     private func configureDataSource() {
-        let hostReg = UICollectionView.CellRegistration<HostCell, Item> { [unowned self] cell, _, _ in cell.host(header) }
-        let cardReg = UICollectionView.CellRegistration<StashCardCell, Item> { cell, _, item in
-            if case .card(let t) = item { cell.configure(t) }
+        let statsReg = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { cell, _, _ in
+            let s = Store.shared.stats()
+            var c = UIListContentConfiguration.cell()
+            c.text = "\(s.minutes / 60) hours · \(s.films) films · \(s.episodes) episodes" + (s.streak > 1 ? " · \(s.streak)-day streak" : "")
+            c.textProperties.font = Theme.text(.subheadline)
+            c.textProperties.color = Theme.secondary
+            c.directionalLayoutMargins = .zero
+            cell.contentConfiguration = c
+            cell.backgroundConfiguration = .clear()
         }
-        let emptyReg = UICollectionView.CellRegistration<EmptyCell, Item> { [unowned self] cell, _, _ in
-            switch status {
-            case .watchlist: cell.configure("Nothing saved", "Find something in Discover and tear off a ticket.")
-            case .watching: cell.configure("Nothing on the go", "Mark an episode of any show watched to start tracking it.")
-            case .seen: cell.configure("No tickets yet", "Mark films and shows as seen and they'll collect here.")
+        let emptyReg = UICollectionView.CellRegistration<EmptyCell, Item> { cell, _, _ in
+            cell.configure("Nothing here yet", "Add films and shows from Search, or from Tonight, and they'll collect here.")
+        }
+        let wideReg = UICollectionView.CellRegistration<WideLockup, Item> { cell, _, item in
+            switch item {
+            case .watching(let t): cell.configure(Self.watching(t))
+            case .marathon(let uuid):
+                guard let m = Store.shared.marathons().first(where: { $0.uuid == uuid }) else { return }
+                let left = m.remaining
+                let next = m.upcomingPlan().first { !$0.slots.isEmpty }?.day.start
+                cell.configure(.init(backdrop: TMDB.imageURL(left.first?.backdrop ?? m.pieces.first?.backdrop, .backdrop), title: m.name ?? "Marathon",
+                                     caption: next.map { $0.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).hour().minute()) } ?? "Nothing scheduled",
+                                     detail: left.isEmpty ? "All watched" : "\(left.count) left · about \(DateText.runtime(left.reduce(0) { $0 + $1.minutes }))"))
+            case .extra(let e): cell.configure(Self.extra(e))
+            default: break
+            }
+        }
+        let posterReg = UICollectionView.CellRegistration<PosterLockup, Item> { cell, _, item in
+            switch item {
+            case .watchlist(let t): cell.configure(t)
+            case .watched(let t):
+                let tracked = Store.shared.tracked(t.id, t.mediaType)
+                let rating = Int(tracked?.rating ?? 0)
+                cell.configure(t, caption: t.name, detail: rating > 0 ? "Rated \(rating)" : tracked?.watchedAt?.formatted(.dateTime.month(.abbreviated).year()),
+                               tint: rating > 0 ? Theme.accent : nil)
+            default: break
+            }
+        }
+        let headerReg = UICollectionView.SupplementaryRegistration<ShelfHeader>(elementKind: ShelfHeader.kind) { [unowned self] header, _, indexPath in
+            switch dataSource.sectionIdentifier(for: indexPath.section) {
+            case .watching: header.configure("Watching") { [weak self] in self?.openList(.watching) }
+            case .watchlist: header.configure("Watchlist") { [weak self] in self?.openList(.watchlist) }
+            case .watched: header.configure("Watched") { [weak self] in self?.openList(.seen) }
+            case .marathons: header.configure("Marathons") { [weak self] in self?.navigationController?.pushViewController(MarathonListViewController(), animated: true) }
+            case .extras: header.configure("Extras")
+            default: header.configure("")
             }
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { cv, indexPath, item in
             switch item {
-            case .header: cv.dequeueConfiguredReusableCell(using: hostReg, for: indexPath, item: item)
-            case .card: cv.dequeueConfiguredReusableCell(using: cardReg, for: indexPath, item: item)
+            case .stats: cv.dequeueConfiguredReusableCell(using: statsReg, for: indexPath, item: item)
             case .empty: cv.dequeueConfiguredReusableCell(using: emptyReg, for: indexPath, item: item)
+            case .watching, .marathon, .extra: cv.dequeueConfiguredReusableCell(using: wideReg, for: indexPath, item: item)
+            case .watchlist, .watched: cv.dequeueConfiguredReusableCell(using: posterReg, for: indexPath, item: item)
             }
+        }
+        dataSource.supplementaryViewProvider = { cv, kind, indexPath in
+            kind == ShelfHeader.kind ? cv.dequeueConfiguredReusableSupplementary(using: headerReg, for: indexPath) : nil
         }
     }
 
+    /// A film shows how far through you are; a show, how many episodes you've watched.
+    private static func watching(_ t: Title) -> WideLockup.Model {
+        let tracked = Store.shared.tracked(t.id, t.mediaType)
+        if t.mediaType == .movie, let tracked, tracked.runtime > 0 {
+            let left = max(Int(tracked.runtime) - Int(tracked.position) / 60, 0)
+            return .init(backdrop: TMDB.imageURL(t.backdropPath, .backdrop), title: t.name, meta: "\(DateText.runtime(left)) left",
+                         progress: Double(tracked.position) / Double(max(tracked.runtime * 60, 1)), caption: t.name, detail: "Film")
+        }
+        let count = Store.shared.episodes(show: t.id).count
+        return .init(backdrop: TMDB.imageURL(t.backdropPath, .backdrop), title: t.name, caption: t.name,
+                     detail: count == 0 ? "Not started" : "\(count) episode\(count == 1 ? "" : "s") watched")
+    }
+
+    private static func extra(_ e: Extra) -> WideLockup.Model {
+        let recent = Store.shared.all(.seen).first?.title
+        switch e {
+        case .year:
+            let year = Calendar.current.component(.year, from: .now)
+            let films = Store.shared.all(.seen).filter { $0.mediaType == .movie && $0.watchedAt.map { Calendar.current.component(.year, from: $0) == year } ?? false }.count
+            return .init(backdrop: TMDB.imageURL(recent?.backdropPath, .backdrop), title: "Year in Review", meta: "\(year) so far · \(films) films")
+        case .history:
+            return .init(backdrop: TMDB.imageURL(Store.shared.all(.seen).dropFirst().first?.backdropPath, .backdrop), title: "History", meta: "Everything you've watched, by date")
+        case .alerts:
+            let show = Store.shared.all(.watching).first { $0.mediaType == .tv }?.title
+            return .init(backdrop: TMDB.imageURL(show?.backdropPath, .backdrop), title: "New Episode Alerts", meta: "The evening a new episode lands")
+        }
+    }
+
+    private func openList(_ status: TrackStatus) {
+        navigationController?.pushViewController(LibraryListViewController(status: status), animated: true)
+    }
+
     func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
-        if case .card = dataSource.itemIdentifier(for: indexPath) { return true }
-        return false
+        switch dataSource.itemIdentifier(for: indexPath) {
+        case .stats, .empty, nil: false
+        default: true
+        }
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        guard case .card(let t) = dataSource.itemIdentifier(for: indexPath) else { return }
-        Haptics.tap()
-        openDetail(t) { [weak self] in
-            self?.dataSource.indexPath(for: .card(t)).flatMap { (collectionView.cellForItem(at: $0) as? StashCardCell)?.card }
+        guard let item = dataSource.itemIdentifier(for: indexPath) else { return }
+        switch item {
+        case .watching(let t), .watchlist(let t), .watched(let t):
+            Haptics.tap()
+            openDetail(t) { [weak self] in self?.dataSource.indexPath(for: item).flatMap { collectionView.cellForItem(at: $0) } }
+        case .marathon(let uuid):
+            guard let m = Store.shared.marathons().first(where: { $0.uuid == uuid }) else { return }
+            withPass { navigationController?.pushViewController(MarathonPlannerViewController(marathon: m), animated: true) }
+        case .extra(.year): withPass { present(YearViewController(), animated: true) }
+        case .extra(.history): withPass { navigationController?.pushViewController(StubBookViewController(), animated: true) }
+        case .extra(.alerts): present(UINavigationController(rootViewController: SettingsViewController()), animated: true)
+        case .stats, .empty: break
         }
     }
 
     func collectionView(_ collectionView: UICollectionView, contextMenuConfigurationForItemsAt indexPaths: [IndexPath], point: CGPoint) -> UIContextMenuConfiguration? {
-        guard let ip = indexPaths.first, case .card(let t) = dataSource.itemIdentifier(for: ip) else { return nil }
-        return titleMenu(t)
-    }
-}
-
-extension TrackStatus {
-    static let shelfOrder: [TrackStatus] = [.watching, .watchlist, .seen]
-}
-
-// MARK: - Header
-
-/// Big numbers, the year in film as a dot grid, and the shelf switcher.
-private final class StashHeader: UIView {
-    let shelves = ShelfPicker(titles: TrackStatus.shelfOrder.map(\.label))
-    private let numbers = UIStackView()
-    private let grid = YearGrid()
-    private let gridCaption = UILabel.make(Theme.label(), Theme.tertiary)
-    private let streak = UILabel.make(Theme.label(.caption2, weight: .bold), Theme.accent)
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        numbers.distribution = .fillEqually
-        numbers.spacing = 1
-        gridCaption.setCaps("Last six months")
-        let gridLabels = UIStackView(arrangedSubviews: [gridCaption, UIView(), streak])
-        let gridBlock = UIStackView(arrangedSubviews: [gridLabels, grid])
-        gridBlock.axis = .vertical
-        gridBlock.spacing = 10
-        let stack = UIStackView(arrangedSubviews: [numbers, gridBlock, shelves])
-        stack.axis = .vertical
-        stack.spacing = 26
-        stack.setCustomSpacing(34, after: gridBlock)
-        addSubview(stack)
-        stack.pin(to: self)
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    func update(stats: Store.Stats, days: [Date: Int], counts: [Int]) {
-        numbers.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        let hours = stats.minutes / 60
-        for (value, caption) in [("\(hours)", "Hours"), ("\(stats.films)", stats.films == 1 ? "Film" : "Films"), ("\(stats.episodes)", "Episodes")] {
-            numbers.addArrangedSubview(Self.stat(value, caption))
-        }
-        grid.days = days
-        streak.setCaps(stats.streak > 1 ? "\(stats.streak)-day streak" : nil)
-        shelves.counts = counts
-    }
-
-    private static func stat(_ value: String, _ caption: String) -> UIView {
-        let v = UILabel.make(Theme.display(56, weight: .black))
-        v.text = value
-        v.adjustsFontSizeToFitWidth = true
-        v.minimumScaleFactor = 0.5
-        let c = UILabel.make(Theme.label(), Theme.tertiary)
-        c.setCaps(caption)
-        let stack = UIStackView(arrangedSubviews: [v, c])
-        stack.axis = .vertical
-        stack.spacing = -2
-        stack.isAccessibilityElement = true
-        stack.accessibilityLabel = "\(value) \(caption)"
-        return stack
-    }
-}
-
-/// The last 26 weeks as dots, one column per week, lit by how much you watched. Today is ringed.
-private final class YearGrid: UIView {
-    var days: [Date: Int] = [:] { didSet { setNeedsDisplay(); updateAccessibility() } }
-    private let weeks = 30, gap: CGFloat = 3
-    private var dot: CGFloat { max((bounds.width - CGFloat(weeks - 1) * gap) / CGFloat(weeks), 4) }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        backgroundColor = .clear
-        contentMode = .redraw
-        isAccessibilityElement = true
-        // Height follows width exactly: 7 rows of square dots sized to fit `weeks` columns.
-        let n = CGFloat(weeks)
-        heightAnchor.constraint(equalTo: widthAnchor, multiplier: 7 / n, constant: 6 * gap - 7 * (n - 1) * gap / n).isActive = true
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func draw(_ rect: CGRect) {
-        let cal = Calendar.current
-        let today = cal.startOfDay(for: .now)
-        let weekday = cal.component(.weekday, from: today) - 1
-        let dot = dot
-        for w in 0..<weeks {
-            for d in 0..<7 {
-                let back = (weeks - 1 - w) * 7 + (weekday - d)
-                guard back >= 0, let day = cal.date(byAdding: .day, value: -back, to: today) else { continue }
-                let cell = CGRect(x: CGFloat(w) * (dot + gap), y: CGFloat(d) * (dot + gap), width: dot, height: dot)
-                let count = days[day] ?? 0
-                // Everything stays inside its cell so the ring and lit dots never clip at the edges.
-                let r = cell.insetBy(dx: dot * (count == 0 ? 0.24 : 0.1), dy: dot * (count == 0 ? 0.24 : 0.1))
-                let path = UIBezierPath(ovalIn: r)
-                (count == 0 ? UIColor(white: 1, alpha: 0.13) : Theme.accent.withAlphaComponent(min(0.45 + CGFloat(count) * 0.2, 1))).setFill()
-                path.fill()
-                if back == 0 {
-                    UIColor.white.setStroke()
-                    let ring = UIBezierPath(ovalIn: cell.insetBy(dx: 0.6, dy: 0.6))
-                    ring.lineWidth = 1.2
-                    ring.stroke()
-                }
-            }
-        }
-    }
-
-    private func updateAccessibility() {
-        let cutoff = Calendar.current.date(byAdding: .day, value: -weeks * 7, to: .now) ?? .distantPast
-        let active = days.filter { $0.key >= cutoff && $0.value > 0 }.count
-        accessibilityLabel = "Watched something on \(active) days in the last six months"
-    }
-}
-
-/// Three shelves as big compressed words; the selected one is lit.
-final class ShelfPicker: UIControl {
-    private var buttons: [UIButton] = []
-    var selectedIndex = 0 { didSet { restyle() } }
-    var counts: [Int] = [] { didSet { restyle() } }
-    private let titles: [String]
-
-    init(titles: [String]) {
-        self.titles = titles
-        super.init(frame: .zero)
-        let stack = UIStackView()
-        stack.spacing = 18
-        stack.alignment = .firstBaseline
-        for (i, _) in titles.enumerated() {
-            let b = UIButton(type: .custom)
-            b.addAction(UIAction { [weak self] _ in
-                guard let self, selectedIndex != i else { return }
-                selectedIndex = i
-                sendActions(for: .valueChanged)
-            }, for: .primaryActionTriggered)
-            buttons.append(b)
-            stack.addArrangedSubview(b)
-        }
-        stack.addArrangedSubview(UIView())
-        addSubview(stack)
-        stack.pin(to: self)
-        restyle()
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    private func restyle() {
-        for (i, b) in buttons.enumerated() {
-            let selected = i == selectedIndex
-            let text = NSMutableAttributedString(string: titles[i].uppercased(), attributes: [
-                .font: Theme.display(30, weight: .black), .foregroundColor: selected ? Theme.text : Theme.tertiary,
-            ])
-            if let count = counts[safe: i], count > 0 {
-                text.append(NSAttributedString(string: " \(count)", attributes: [
-                    .font: Theme.label(.caption2, weight: .bold), .foregroundColor: selected ? Theme.accent : Theme.tertiary, .baselineOffset: 12,
-                ]))
-            }
-            b.setAttributedTitle(text, for: .normal)
-            b.accessibilityLabel = titles[i] + (counts[safe: i].map { ", \($0)" } ?? "")
-            b.accessibilityTraits = selected ? [.button, .selected] : .button
+        switch indexPaths.first.flatMap({ dataSource.itemIdentifier(for: $0) }) {
+        case .watching(let t), .watchlist(let t), .watched(let t): titleMenu(t)
+        default: nil
         }
     }
 }
 
-// MARK: - Cells
+/// Everything on one shelf, as a grid.
+final class LibraryListViewController: UIViewController, UICollectionViewDelegate {
+    private let status: TrackStatus
+    private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout { _, _ in
+        let item = NSCollectionLayoutItem(layoutSize: .init(widthDimension: .fractionalWidth(1 / 3), heightDimension: .estimated(220)))
+        item.contentInsets = .init(top: 0, leading: Shelf.gap / 2, bottom: 0, trailing: Shelf.gap / 2)
+        let group = NSCollectionLayoutGroup.horizontal(layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .estimated(220)), subitems: [item])
+        let section = NSCollectionLayoutSection(group: group)
+        section.interGroupSpacing = 16
+        section.contentInsets = .init(top: 8, leading: Shelf.margin - Shelf.gap / 2, bottom: 100, trailing: Shelf.margin - Shelf.gap / 2)
+        return section
+    })
+    private var dataSource: UICollectionViewDiffableDataSource<Int, Title>!
 
-/// A tracked title as a collectible card with its status written underneath.
-final class StashCardCell: UICollectionViewCell {
-    let card = TiltCardView()
-    private let rating = UILabel.make(Theme.display(22, weight: .black), .black)
-    private let name = UILabel.make(Theme.text(.subheadline, weight: .semibold), Theme.text, lines: 2)
-    private let meta = UILabel.make(Theme.label(.caption2), Theme.secondary)
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        card.maxAngle = 0.1
-        rating.textAlignment = .center
-        rating.backgroundColor = Theme.accent
-        rating.layer.cornerRadius = 8
-        rating.layer.cornerCurve = .continuous
-        rating.clipsToBounds = true
-        let text = UIStackView(arrangedSubviews: [name, meta])
-        text.axis = .vertical
-        text.spacing = 3
-        [card, rating, text].forEach { contentView.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
-        NSLayoutConstraint.activate([
-            card.topAnchor.constraint(equalTo: contentView.topAnchor),
-            card.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            card.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            card.heightAnchor.constraint(equalTo: card.widthAnchor, multiplier: 1.5),
-            rating.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
-            rating.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -8),
-            rating.widthAnchor.constraint(greaterThanOrEqualToConstant: 34),
-            rating.heightAnchor.constraint(equalToConstant: 30),
-            text.topAnchor.constraint(equalTo: card.bottomAnchor, constant: 12),
-            text.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 2),
-            text.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -2),
-            text.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-        ])
-        isAccessibilityElement = true
-        accessibilityTraits = .button
+    init(status: TrackStatus) {
+        self.status = status
+        super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(_ title: Title) {
-        card.setPoster(title.posterPath)
-        name.text = title.name
-        let tracked = Store.shared.tracked(title.id, title.mediaType)
-        let score = Int(tracked?.rating ?? 0)
-        rating.text = score > 0 ? "\(score)" : nil
-        rating.isHidden = score == 0
-        card.foil = score >= 9
-        switch tracked?.status ?? .watchlist {
-        case .watchlist:
-            if let date = title.date, !DateText.isPast(date), let pretty = DateText.pretty(date) {
-                meta.setCaps("Out \(pretty)")
-                meta.textColor = Theme.accent
-            } else {
-                meta.setCaps([title.mediaType == .movie ? "Film" : "Series", title.year].compactMap { $0 }.joined(separator: " · "))
-                meta.textColor = Theme.secondary
-            }
-        case .watching:
-            if title.mediaType == .movie, let t = tracked, t.position > 0 {
-                meta.setCaps("\(max(Int(t.runtime) - Int(t.position) / 60, 0)) min left")
-            } else {
-                let eps = Store.shared.episodes(show: title.id)
-                meta.setCaps(eps.map(\.key).max().map { "Last seen \($0.label)" } ?? "Not started")
-            }
-            meta.textColor = Theme.secondary
-        case .seen:
-            meta.setCaps(tracked?.watchedAt.map { "Seen " + $0.formatted(.dateTime.month(.abbreviated).year()) })
-            meta.textColor = Theme.secondary
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = status.label
+        installBackdrop()
+        navigationItem.largeTitleDisplayMode = .always
+        collectionView.backgroundColor = .clear
+        collectionView.delegate = self
+        view.addSubview(collectionView)
+        collectionView.pin(to: view)
+        let reg = UICollectionView.CellRegistration<PosterLockup, Title> { [status] cell, _, t in
+            let tracked = Store.shared.tracked(t.id, t.mediaType)
+            let rating = Int(tracked?.rating ?? 0)
+            let detail = status == .seen && rating > 0 ? "Rated \(rating)" : t.year
+            cell.configure(t, caption: t.name, detail: detail, tint: status == .seen && rating > 0 ? Theme.accent : nil)
         }
-        accessibilityLabel = [title.name, meta.accessibilityLabel, score > 0 ? "rated \(score) out of 10" : nil].compactMap { $0 }.joined(separator: ", ")
+        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { cv, ip, t in
+            cv.dequeueConfiguredReusableCell(using: reg, for: ip, item: t)
+        }
+        NotificationCenter.default.addObserver(self, selector: #selector(reload), name: .NSManagedObjectContextObjectsDidChange, object: Store.shared.context)
+        reload()
     }
 
-    override var isHighlighted: Bool { didSet { Spring.press(self, isHighlighted, scale: 0.96) } }
-}
-
-final class EmptyCell: UICollectionViewCell {
-    private let title = UILabel.make(Theme.display(40, weight: .black), Theme.text, lines: 0)
-    private let body = UILabel.make(Theme.text(.body), Theme.secondary, lines: 0)
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        let stack = UIStackView(arrangedSubviews: [title, body])
-        stack.axis = .vertical
-        stack.spacing = 8
-        contentView.addSubview(stack)
-        stack.pin(to: contentView, inset: 0)
-        contentView.layoutMargins = .init(top: 30, left: 0, bottom: 30, right: 0)
-        isAccessibilityElement = true
+    @objc private func reload() {
+        var snap = NSDiffableDataSourceSnapshot<Int, Title>()
+        snap.appendSections([0])
+        snap.appendItems(Store.shared.all(status).map(\.title))
+        dataSource.apply(snap, animatingDifferences: view.window != nil)
     }
-    required init?(coder: NSCoder) { fatalError() }
 
-    func configure(_ title: String, _ body: String) {
-        self.title.text = title.uppercased()
-        self.body.text = body
-        accessibilityLabel = "\(title). \(body)"
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        guard let t = dataSource.itemIdentifier(for: indexPath) else { return }
+        openDetail(t) { [weak self] in self?.collectionView.cellForItem(at: indexPath) }
+    }
+
+    func collectionView(_ collectionView: UICollectionView, contextMenuConfigurationForItemsAt indexPaths: [IndexPath], point: CGPoint) -> UIContextMenuConfiguration? {
+        indexPaths.first.flatMap { dataSource.itemIdentifier(for: $0) }.map(titleMenu)
     }
 }

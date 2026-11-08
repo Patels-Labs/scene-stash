@@ -458,3 +458,26 @@ final class HeroView: UIView {
     }
     private var logoRatio: NSLayoutConstraint?
 }
+
+/// A screen with nothing on it yet: a title and a line saying how to fill it.
+final class EmptyCell: UICollectionViewCell {
+    private let title = UILabel.make(Theme.text(.title2, weight: .bold), Theme.text, lines: 0)
+    private let body = UILabel.make(Theme.text(.body), Theme.secondary, lines: 0)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        let stack = UIStackView(arrangedSubviews: [title, body])
+        stack.axis = .vertical
+        stack.spacing = 6
+        contentView.addSubview(stack)
+        stack.pin(to: contentView)
+        isAccessibilityElement = true
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(_ title: String, _ body: String) {
+        self.title.text = title
+        self.body.text = body
+        accessibilityLabel = "\(title). \(body)"
+    }
+}

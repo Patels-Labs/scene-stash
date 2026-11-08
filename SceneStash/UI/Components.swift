@@ -199,7 +199,7 @@ extension UIViewController {
                 }
             }
             if current != nil {
-                actions.append(UIAction(title: "Remove from Stash", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in
+                actions.append(UIAction(title: "Remove from Library", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in
                     Store.shared.remove(title)
                 })
             }
