@@ -244,7 +244,11 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         for (slot, start) in zip(programme, times).prefix(4) {
             guard let title = slot.title else { continue }
             var tint = "F5B544"
-            if let url = TMDB.imageURL(title.posterPath, .poster), let color = await ImageLoader.shared.tint(for: url) { tint = color.hex }
+            if let url = TMDB.imageURL(title.posterPath, .poster) {
+                if let color = await ImageLoader.shared.tint(for: url) { tint = color.hex }
+                // Widgets fill with the poster. A running film's copy stays small for its Live Activity.
+                if WatchSession.shared.state?.id != title.id { await WatchSession.shared.savePoster(url, id: title.id, width: 360) }
+            }
             let code: String
             switch slot {
             case .episode(let u): code = "S\(u.episode.seasonNumber) E\(u.episode.episodeNumber)"
