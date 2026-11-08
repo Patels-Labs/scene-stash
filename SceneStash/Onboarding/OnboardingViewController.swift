@@ -1,10 +1,10 @@
 import UIKit
 
-/// Intro → "Seen it?" swipe deck → streaming services → your stash. Ambient light follows whatever poster is in focus.
+/// Intro → "Watched it?" swipe deck → streaming services → your library. Ambient light follows whatever poster is in focus.
 final class OnboardingViewController: UIViewController {
     private let glow = GlowView()
     private let stage = UIView()
-    private let button = PillButton("Start your stash")
+    private let button = PillButton("Get Started")
     private var beat = 0
     private var current: UIView?
     private var titles: [Title] = []
@@ -54,7 +54,7 @@ final class OnboardingViewController: UIViewController {
             titles = all.filter { $0.posterPath != nil && seen.insert($0.id).inserted }.shuffled()
             spinner.removeFromSuperview()
             let intro = IntroBeat(titles: Array(titles.prefix(6)), glow: glow)
-            show(intro, title: "Start your stash", animated: false)
+            show(intro, title: "Get Started", animated: false)
             intro.play()
             UIView.animate(withDuration: 0.6, delay: UIAccessibility.isReduceMotionEnabled ? 0 : 1.1) { self.button.alpha = 1 }
         }
@@ -142,7 +142,7 @@ private final class IntroBeat: UIView {
     init(titles: [Title], glow: GlowView) {
         self.titles = titles
         self.glow = glow
-        words = beatHeader(step: nil, title: "Every film.\nEvery episode.\nOne stash.", body: "Track what you watch, find what's next, and keep every ticket.")
+        words = beatHeader(step: nil, title: "Every film.\nEvery episode.\nOne library.", body: "Track what you watch, find what's next, and plan movie nights with friends.")
         super.init(frame: .zero)
         for i in 0..<3 {
             let card = TiltCardView()
@@ -265,7 +265,7 @@ private final class SwipeCard: UIView {
         }
         isAccessibilityElement = true
         accessibilityLabel = [title.name, title.year].compactMap { $0 }.joined(separator: ", ")
-        accessibilityHint = "Use the buttons below to mark it seen, save it, or skip."
+        accessibilityHint = "Use the buttons below to mark it watched, save it, or skip."
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -296,7 +296,7 @@ private final class DeckBeat: UIView {
         queue = titles
         self.glow = glow
         super.init(frame: .zero)
-        let header = beatHeader(step: "Step 1 of 2", title: "Seen it?", body: "Swipe right if you've seen it, left if not, up to save it for later.")
+        let header = beatHeader(step: "Step 1 of 2", title: "Watched it?", body: "Swipe right if you've watched it, left if not, up to save it for later.")
         name.textAlignment = .center
         meta.textAlignment = .center
         empty.text = "THAT'S THE STACK."
@@ -304,9 +304,9 @@ private final class DeckBeat: UIView {
         empty.isHidden = true
         deckArea.isUserInteractionEnabled = false
 
-        let skip = Self.round("xmark", tint: Theme.secondary, label: "Not seen")
+        let skip = Self.round("xmark", tint: Theme.secondary, label: "Not watched")
         let want = Self.round("bookmark.fill", tint: Theme.accent, label: "Save for later")
-        let seen = Self.round("checkmark", tint: .white, label: "Seen it")
+        let seen = Self.round("checkmark", tint: .white, label: "Watched it")
         skip.addAction(UIAction { [weak self] _ in self?.decide(.skip) }, for: .primaryActionTriggered)
         want.addAction(UIAction { [weak self] _ in self?.decide(.want) }, for: .primaryActionTriggered)
         seen.addAction(UIAction { [weak self] _ in self?.decide(.seen) }, for: .primaryActionTriggered)
@@ -442,7 +442,7 @@ private final class DeckBeat: UIView {
         case .want: Store.shared.track(card.title, status: .watchlist); stashed.append(card.title)
         case .skip: break
         }
-        tally.setCaps([counts[.seen].map { "\($0) seen" }, counts[.want].map { "\($0) saved" }].compactMap { $0 }.joined(separator: " · "))
+        tally.setCaps([counts[.seen].map { "\($0) watched" }, counts[.want].map { "\($0) saved" }].compactMap { $0 }.joined(separator: " · "))
         onChange?(stashed)
         refill()
     }
@@ -736,8 +736,8 @@ private final class FinaleBeat: UIView {
 
     init(stashed: [Title], glow: GlowView) {
         self.stashed = stashed
-        let caption = stashed.isEmpty ? "Your stash is ready" : stashed.count == 1 ? "Title in your stash" : "Titles in your stash"
-        words = beatHeader(step: nil, title: caption, body: stashed.isEmpty ? "Find something in Discover and tear off your first ticket." : "All set. Tonight's picks are waiting.")
+        let caption = stashed.isEmpty ? "Your library is ready" : stashed.count == 1 ? "Title in your library" : "Titles in your library"
+        words = beatHeader(step: nil, title: caption, body: stashed.isEmpty ? "Find something in Search and add it to your library." : "All set. Tonight's picks are waiting.")
         super.init(frame: .zero)
         number.text = "0"
         number.isHidden = stashed.isEmpty

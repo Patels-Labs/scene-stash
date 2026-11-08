@@ -7,7 +7,7 @@ final class SettingsViewController: UITableViewController {
     private let sections: [(String?, [Row], String?)] = [
         (Pass.selling ? "All-Access Pass" : "Extras", Pass.selling ? [.pass, .icon, .alerts] : [.icon, .alerts], "Alerts come at six on the evening a new episode lands, and three days before a season premiere. Never more."),
         ("Watching from", [.region, .services], "Your services are highlighted on every title, so you know what's free to watch."),
-        ("Sync", [.icloud], "Your stash syncs privately through your iCloud account."),
+        ("Sync", [.icloud], "Your library syncs privately through your iCloud account."),
         ("Scene Stash", [.replay, .version], "This product uses the TMDB API but is not endorsed or certified by TMDB. Streaming availability provided by JustWatch."),
     ]
     private var icloudStatus = "Checking…"
@@ -68,7 +68,7 @@ final class SettingsViewController: UITableViewController {
             config.image = UIImage(systemName: Pass.shared.isUnlocked ? "app.badge" : "lock.fill")
             cell.accessoryType = .disclosureIndicator
         case .alerts:
-            config.text = "Premiere alerts"
+            config.text = "New Episode Alerts"
             config.image = UIImage(systemName: "bell.badge")
             let toggle = UISwitch()
             toggle.isOn = Alerts.enabled && Pass.shared.isUnlocked
@@ -122,7 +122,7 @@ final class SettingsViewController: UITableViewController {
                 let on = await Alerts.enable()
                 toggle.setOn(on, animated: true)
                 if !on {
-                    let alert = UIAlertController(title: "Notifications are off", message: "Turn on notifications for Scene Stash in Settings to get premiere alerts.", preferredStyle: .alert)
+                    let alert = UIAlertController(title: "Notifications are off", message: "Turn on notifications for Scene Stash in Settings to get new episode alerts.", preferredStyle: .alert)
                     alert.addAction(UIAlertAction(title: "OK", style: .default))
                     present(alert, animated: true)
                 }
@@ -219,7 +219,7 @@ final class RegionViewController: UITableViewController, UISearchResultsUpdating
                 let on = await Alerts.enable()
                 toggle.setOn(on, animated: true)
                 if !on {
-                    let alert = UIAlertController(title: "Notifications are off", message: "Turn on notifications for Scene Stash in Settings to get premiere alerts.", preferredStyle: .alert)
+                    let alert = UIAlertController(title: "Notifications are off", message: "Turn on notifications for Scene Stash in Settings to get new episode alerts.", preferredStyle: .alert)
                     alert.addAction(UIAlertAction(title: "OK", style: .default))
                     present(alert, animated: true)
                 }
@@ -410,7 +410,7 @@ private final class IconHeroCell: UICollectionViewCell {
         let title = UILabel.make(Theme.display(52, weight: .black))
         title.text = "TICKET STOCK"
         let sub = UILabel.make(Theme.text(.subheadline), Theme.secondary, lines: 0)
-        sub.text = "Pick the paper your tickets are printed on. Your Home Screen follows."
+        sub.text = "Choose the icon on your Home Screen."
         let stack = UIStackView(arrangedSubviews: [title, sub, image, name])
         stack.axis = .vertical
         stack.alignment = .center

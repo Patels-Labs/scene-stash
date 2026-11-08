@@ -31,8 +31,8 @@ extension Color {
 }
 
 extension Font {
-    static func display(_ size: CGFloat) -> Font { .system(size: size, weight: .black).width(.compressed) }
-    static func caps(_ size: CGFloat = 9) -> Font { .system(size: size, weight: .bold).width(.expanded) }
+    static func display(_ size: CGFloat) -> Font { .system(size: size * 0.8, weight: .bold) }
+    static func caps(_ size: CGFloat = 9) -> Font { .system(size: size + 1, weight: .semibold) }
 }
 
 private struct Caps: View {
@@ -114,7 +114,7 @@ private struct TonightView: View {
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Caps(text: "Tonight" + (snapshot.doors.map { " · Doors " + $0.formatted(date: .omitted, time: .shortened) } ?? ""))
+                    Caps(text: "Tonight" + (snapshot.doors.map { " · From " + $0.formatted(date: .omitted, time: .shortened) } ?? ""))
                     Spacer()
                     Caps(text: "\(snapshot.booked / 60)h \(snapshot.booked % 60)m")
                 }
@@ -148,7 +148,7 @@ struct PremiereWidget: Widget {
             PremiereView(snapshot: entry.snapshot, now: entry.date).containerBackground(.black, for: .widget)
         }
         .configurationDisplayName("Coming soon")
-        .description("Days until the next premiere in your stash.")
+        .description("Days until the next new episode or season in your library.")
         .supportedFamilies([.systemSmall])
     }
 }
@@ -189,8 +189,8 @@ struct PunchCardWidget: Widget {
         StaticConfiguration(kind: "punchcard", provider: SnapshotProvider()) { entry in
             PunchCardView(snapshot: entry.snapshot).containerBackground(Color(hex: "0D1416"), for: .widget)
         }
-        .configurationDisplayName("Punch card")
-        .description("The season you're on, hole by hole.")
+        .configurationDisplayName("Up Next")
+        .description("The season you're on, episode by episode.")
         .supportedFamilies([.systemSmall])
     }
 }
@@ -202,14 +202,14 @@ private struct PunchCardView: View {
     var body: some View {
         if !snapshot.unlocked { Locked() } else if let card = snapshot.card {
             VStack(alignment: .leading, spacing: 6) {
-                Caps(text: "Punch card · S\(card.season)", color: teal)
+                Caps(text: "Season \(card.season)", color: teal)
                 holes(card.holes)
                 Text(card.name.uppercased()).font(.display(18)).foregroundStyle(.white).lineLimit(1).minimumScaleFactor(0.6)
                 Caps(text: card.left == 0 ? "Caught up" : "\(card.left) left", size: 7)
             }
         } else {
             VStack(alignment: .leading, spacing: 4) {
-                Caps(text: "Punch card", color: teal)
+                Caps(text: "Up Next", color: teal)
                 Text("START A\nSHOW").font(.display(26)).foregroundStyle(.white)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
@@ -291,7 +291,7 @@ private struct LockScreenView: View {
             Strip(attributes: attributes, state: state, tint: tint).frame(height: 16)
             if attributes.stinger, !state.finished {
                 HStack(spacing: 8) {
-                    Caps(text: "Stay seated", color: amber, size: 7)
+                    Caps(text: "After the credits", color: amber, size: 7)
                     Text("There's a scene during or after the credits.").font(.system(size: 12)).foregroundStyle(.white.opacity(0.8))
                 }
                 .padding(.horizontal, 10).padding(.vertical, 7)
@@ -309,7 +309,7 @@ private struct Status: View {
 
     var body: some View {
         if state.finished {
-            Text("Marked seen. Rate it in Scene Stash.")
+            Text("Marked as watched. Rate it in Scene Stash.")
         } else if state.pausedAt != nil {
             let s = Int(state.elapsed())
             Text(String(format: "At %d:%02d:%02d · end time moves with you", s / 3600, s % 3600 / 60, s % 60))

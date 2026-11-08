@@ -74,7 +74,7 @@ final class StubBookViewController: UIViewController, UICollectionViewDelegate {
     // Tap a stub to write on it.
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         guard case .stub(let stub) = dataSource.itemIdentifier(for: indexPath) else { return }
-        let alert = UIAlertController(title: stub.title.name, message: "A line for the stub.", preferredStyle: .alert)
+        let alert = UIAlertController(title: stub.title.name, message: "A line about it.", preferredStyle: .alert)
         alert.addTextField { field in
             field.text = stub.note
             field.placeholder = "The sandworm ride. I stood up."
@@ -104,7 +104,7 @@ private final class StubIntroCell: UICollectionViewCell {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        title.setDisplay("THE STUB\nBOOK")
+        title.setDisplay("HISTORY")
         title.accessibilityTraits = .header
         let stack = UIStackView(arrangedSubviews: [title, body])
         stack.axis = .vertical
@@ -116,8 +116,8 @@ private final class StubIntroCell: UICollectionViewCell {
 
     func configure(count: Int) {
         body.text = count == 0
-            ? "Finish a film and its stub lands here, dated, with your rating. Tap a stub to write on it."
-            : "\(count) stub\(count == 1 ? "" : "s"). Every film you finish gets one. Tap a stub to write on it."
+            ? "Finish a film and it lands here, dated, with your rating. Tap one to add a line."
+            : "\(count) film\(count == 1 ? "" : "s") watched. Tap one to add a line."
     }
 }
 
@@ -213,7 +213,7 @@ private final class StubCell: UICollectionViewCell {
                 applyWash(tint)
             }
         }
-        accessibilityLabel = "Stub \(number), \(title.name), seen \(date.formatted(date: .long, time: .omitted))" + (value > 0 ? ", rated \(value)" : "") + (text.map { ", note: \($0)" } ?? "")
+        accessibilityLabel = "Film \(number), \(title.name), watched \(date.formatted(date: .long, time: .omitted))" + (value > 0 ? ", rated \(value)" : "") + (text.map { ", note: \($0)" } ?? "")
     }
 
     private func applyWash(_ tint: UIColor) {

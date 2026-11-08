@@ -66,7 +66,7 @@ final class MarathonPlannerViewController: UIViewController {
     private let dayRows = UIStackView()
     private let breakLabel = UILabel.make(Theme.display(24, weight: .black))
     private let planStack = UIStackView()
-    private let save = PillButton("Put it on the programme")
+    private let save = PillButton("Add to Tonight")
 
     /// A new marathon from a set of pieces.
     init(name: String, pieces: [Piece]) {
@@ -151,7 +151,7 @@ final class MarathonPlannerViewController: UIViewController {
             content.leadingAnchor.constraint(equalTo: scroll.frameLayoutGuide.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: scroll.frameLayoutGuide.trailingAnchor),
         ])
-        save.configuration?.title = marathon == nil ? "Put it on the programme" : "Save changes"
+        save.configuration?.title = marathon == nil ? "Add to Tonight" : "Save changes"
         save.addAction(UIAction { [weak self] _ in self?.commit() }, for: .primaryActionTriggered)
         view.addSubview(save)
         save.translatesAutoresizingMaskIntoConstraints = false
@@ -243,7 +243,7 @@ final class MarathonPlannerViewController: UIViewController {
             start.minuteInterval = 5
             start.date = day.start
             start.tintColor = Theme.accent
-            start.accessibilityLabel = "Day \(i + 1) doors"
+            start.accessibilityLabel = "Day \(i + 1) start"
             let end = UIDatePicker()
             end.datePickerMode = .time
             end.preferredDatePickerStyle = .compact
