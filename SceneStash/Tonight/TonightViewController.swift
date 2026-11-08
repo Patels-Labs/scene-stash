@@ -514,8 +514,20 @@ final class TonightHeroCell: UICollectionViewCell {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    /// What the hero showed last, so a new episode or title (you just finished one) fades across instead of snapping.
+    private var current: TonightViewController.Slot?
+
     func configure(_ slot: TonightViewController.Slot, starts: Date, lightsUp: Date) {
         guard let title = slot.title else { return }
+        let changed = current != nil && current != slot
+        current = slot
+        guard changed else { return fill(slot, title: title, starts: starts) }
+        UIView.transition(with: hero, duration: 0.45, options: [.transitionCrossDissolve, .allowUserInteraction]) {
+            self.fill(slot, title: title, starts: starts)
+        }
+    }
+
+    private func fill(_ slot: TonightViewController.Slot, title: Title, starts: Date) {
         let now = starts <= .now
         let ends = starts + TimeInterval(slot.minutes * 60)
         let timing = now ? "Done by \(ends.formatted(date: .omitted, time: .shortened))" : "Starts \(starts.formatted(date: .omitted, time: .shortened))"
@@ -546,6 +558,7 @@ final class TonightHeroCell: UICollectionViewCell {
 
     /// Nothing in progress: lead with something people are watching and a way to find more.
     func configureEmpty(_ suggestion: Title?) {
+        current = nil
         primary.configuration?.title = "Find Something to Watch"
         primary.configuration?.image = UIImage(systemName: "magnifyingglass")
         done.isHidden = true
