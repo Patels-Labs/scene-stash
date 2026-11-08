@@ -443,8 +443,8 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             cell.configure(symbol: "popcorn", title: "After-Credits Scene", detail: line)
         }
         let ratingReg = UICollectionView.CellRegistration<RatingCell, Item> { [unowned self] cell, _, _ in
-            cell.configure(Int(tracked?.rating ?? 0))
-            cell.onChange = { [weak self] value in
+            cell.row.set(Int(tracked?.rating ?? 0))
+            cell.row.onChange = { [weak self] value in
                 guard let self else { return }
                 Store.shared.setRating(value, for: detail?.title ?? item)
             }
