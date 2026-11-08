@@ -316,11 +316,11 @@ final class GlassLabel: UIView {
         addSubview(glass)
         glass.pin(to: self)
         glass.contentView.addSubview(label)
-        label.pin(to: glass.contentView, inset: 0)
         label.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor, constant: 10),
-            label.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor, constant: -10),
+            label.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor, constant: -12),
+            label.centerYAnchor.constraint(equalTo: glass.contentView.centerYAnchor),
             heightAnchor.constraint(equalToConstant: 26),
         ])
     }
