@@ -22,10 +22,10 @@ nonisolated enum NightStatus: Int, CaseIterable, Sendable {
 
     var label: String {
         switch self {
-        case .noTickets: "No tickets yet"
-        case .ticketsInHand: "Tickets in hand"
-        case .lightsDown: "Lights down"
-        case .creditsRolled: "Credits rolled"
+        case .noTickets: "Planning"
+        case .ticketsInHand: "Booked"
+        case .lightsDown: "Now Showing"
+        case .creditsRolled: "Finished"
         }
     }
 }

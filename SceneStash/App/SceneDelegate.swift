@@ -11,7 +11,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window.overrideUserInterfaceStyle = .dark
         let tabs = UITabBarController(tabs: [
             UITab(title: "Tonight", image: UIImage(systemName: "popcorn"), identifier: "tonight") { _ in Self.nav(TonightViewController()) },
-            UITab(title: "Stash", image: UIImage(systemName: "ticket"), identifier: "stash") { _ in Self.nav(StashViewController()) },
+            UITab(title: "Library", image: UIImage(systemName: "rectangle.stack"), identifier: "stash") { _ in Self.nav(StashViewController()) },
             UITab(title: "Nights", image: UIImage(systemName: "person.2"), identifier: "nights") { _ in Self.nav(NightsViewController()) },
             UISearchTab { _ in Self.nav(DiscoverViewController()) },
         ])
