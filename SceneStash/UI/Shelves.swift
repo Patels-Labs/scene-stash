@@ -388,6 +388,8 @@ final class HeroView: UIView {
     private var logoTask: Task<Void, Never>?
     /// How far the buttons sit above the art's bottom edge; more when something else lives there.
     private(set) lazy var contentBottom = content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -20)
+    /// Artwork that's already downloaded, so a hero can draw its finished state straight away.
+    private static var ready: [Title: TMDB.Artwork] = [:]
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -444,11 +446,17 @@ final class HeroView: UIView {
         let key = "\(title.mediaType)\(title.id)/\(poster ?? "")"
         guard key != shown else { return }
         shown = key
-        art.setImage(TMDB.imageURL(poster ?? title.posterPath, .hero))
         name.text = title.name
         name.isHidden = false
         logo.isHidden = true
         logoTask?.cancel()
+        // Downloaded already: draw the finished page, so swiping to it never shows the art changing.
+        if let artwork = Self.ready[title] {
+            art.setImage(TMDB.imageURL(poster ?? artwork.poster ?? title.posterPath, .hero))
+            if let url = TMDB.imageURL(artwork.logo, .posterLarge), let image = ImageLoader.shared.cached(url) { setLogo(image, title) }
+            return
+        }
+        art.setImage(TMDB.imageURL(poster ?? title.posterPath, .hero))
         logoTask = Task { [weak self] in
             let artwork = await TMDB.shared.artwork(title.id, title.mediaType)
             guard !Task.isCancelled, let self else { return }
@@ -456,15 +464,29 @@ final class HeroView: UIView {
                 UIView.transition(with: art, duration: 0.3, options: .transitionCrossDissolve) { self.art.image = image }
             }
             guard let url = TMDB.imageURL(artwork.logo, .posterLarge), let image = await ImageLoader.shared.image(url), !Task.isCancelled else { return }
-            logo.image = image
-            logoRatio?.isActive = false
-            logoRatio = logo.widthAnchor.constraint(equalTo: logo.heightAnchor, multiplier: image.size.width / max(image.size.height, 1))
-            logoRatio?.isActive = true
-            logo.isHidden = false
-            name.isHidden = true
-            logo.accessibilityLabel = title.name
-            logo.isAccessibilityElement = true
+            setLogo(image, title)
         }
+    }
+
+    /// Downloads a title's clean art and logo ahead of time, for heroes that aren't on screen yet.
+    static func prepare(_ title: Title) async {
+        guard ready[title] == nil else { return }
+        let artwork = await TMDB.shared.artwork(title.id, title.mediaType)
+        for url in [TMDB.imageURL(artwork.poster, .hero), TMDB.imageURL(artwork.logo, .posterLarge)].compactMap({ $0 }) {
+            _ = await ImageLoader.shared.image(url)
+        }
+        ready[title] = artwork
+    }
+
+    private func setLogo(_ image: UIImage, _ title: Title) {
+        logo.image = image
+        logoRatio?.isActive = false
+        logoRatio = logo.widthAnchor.constraint(equalTo: logo.heightAnchor, multiplier: image.size.width / max(image.size.height, 1))
+        logoRatio?.isActive = true
+        logo.isHidden = false
+        name.isHidden = true
+        logo.accessibilityLabel = title.name
+        logo.isAccessibilityElement = true
     }
     private var logoRatio: NSLayoutConstraint?
     private var shown: String?
