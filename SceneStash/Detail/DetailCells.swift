@@ -356,6 +356,9 @@ final class ProviderRowCell: UICollectionViewCell {
         logo.backgroundColor = Theme.surfaceHigh
         chevron.tintColor = Theme.tertiary
         chevron.preferredSymbolConfiguration = .init(pointSize: 13, weight: .semibold)
+        chevron.contentMode = .center
+        chevron.setContentHuggingPriority(.required, for: .horizontal)
+        chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
         rule.backgroundColor = Card.rule
         let text = UIStackView(arrangedSubviews: [name, note])
         text.axis = .vertical
