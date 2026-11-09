@@ -274,8 +274,8 @@ final class NightFormViewController: UIViewController, MKLocalSearchCompleterDel
     }
 
     private static func field(_ caption: String, _ input: UIView) -> UIView {
-        let label = UILabel.make(Theme.label(), Theme.tertiary)
-        label.setCaps(caption)
+        let label = UILabel.make(Theme.text(.footnote), Theme.tertiary)
+        label.text = caption
         input.accessibilityLabel = caption
         let stack = UIStackView(arrangedSubviews: [label, input])
         stack.axis = .vertical
