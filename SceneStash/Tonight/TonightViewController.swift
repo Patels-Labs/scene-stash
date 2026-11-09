@@ -478,6 +478,8 @@ final class TonightHeroCell: UICollectionViewCell, UICollectionViewDelegate, UIP
     override init(frame: CGRect) {
         let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .fractionalHeight(1))
         let section = NSCollectionLayoutSection(group: .horizontal(layoutSize: size, subitems: [.init(layoutSize: size)]))
+        // Left automatic, a sideways pager keeps its pages out of the status bar's safe area.
+        section.contentInsetsReference = .none
         let config = UICollectionViewCompositionalLayoutConfiguration()
         config.scrollDirection = .horizontal
         pager = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout(section: section, configuration: config))
