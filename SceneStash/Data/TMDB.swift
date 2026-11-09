@@ -237,7 +237,7 @@ extension Reel {
 }
 
 enum ImageSize: String {
-    case poster = "w342", posterLarge = "w500", hero = "w780", backdrop = "w1280", still = "w300", profile = "w185", logo = "w92"
+    case poster = "w342", posterLarge = "w500", hero = "w780", backdrop = "w1280", original = "original", still = "w300", profile = "w185", logo = "w92"
 }
 
 enum TMDBError: LocalizedError {
