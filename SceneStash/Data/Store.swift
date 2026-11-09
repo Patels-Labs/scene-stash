@@ -291,6 +291,8 @@ final class Store {
                 context.delete(e)
             }
         }
+        // A show's position is how far into its next episode you are, and that episode has just changed.
+        tracked(show.id, .tv)?.position = 0
         if watched, tracked(show.id, .tv)?.status != .seen {
             track(show, status: .watching, runtime: runtime)
         } else {
