@@ -11,11 +11,15 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window.overrideUserInterfaceStyle = .dark
         let tabs = UITabBarController(tabs: [
             UITab(title: "Tonight", image: UIImage(systemName: "popcorn"), identifier: "tonight") { _ in Self.nav(TonightViewController()) },
-            UITab(title: "Library", image: UIImage(systemName: "rectangle.stack"), identifier: "stash") { _ in Self.nav(StashViewController()) },
+            UITab(title: "Library", image: UIImage(systemName: "rectangle.stack"), identifier: "stash") { _ in Self.nav(LibraryViewController()) },
             UITab(title: "Nights", image: UIImage(systemName: "person.2"), identifier: "nights") { _ in Self.nav(NightsViewController()) },
-            UISearchTab { _ in Self.nav(DiscoverViewController()) },
+            UISearchTab { _ in Self.nav(SearchViewController()) },
         ])
         window.rootViewController = tabs
+        #if DEBUG
+        // Local previews: `-StartTab nights` opens on that tab, so each screen can be checked without clicking.
+        if let start = UserDefaults.standard.string(forKey: "StartTab") { tabs.selectedTab = tabs.tabs.first { $0.identifier == start } }
+        #endif
         window.makeKeyAndVisible()
         Task { await Store.shared.backfillRuntimes() }
         self.window = window

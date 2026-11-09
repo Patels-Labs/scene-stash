@@ -41,6 +41,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         }]))
 
         collectionView.backgroundColor = .clear
+        collectionView.selfSizingInvalidation = .enabledIncludingConstraints
         collectionView.delegate = self
         // The art runs up under the navigation bar, like the TV app.
         collectionView.contentInsetAdjustmentBehavior = .never
@@ -101,8 +102,6 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
 
     private func buildHero() {
         hero.show(item, meta: nil)
-        primary.widthAnchor.constraint(equalToConstant: 255).isActive = true
-        secondary.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
         let row = UIStackView(arrangedSubviews: [secondary, trailer, status])
         row.spacing = 10
         row.alignment = .center
@@ -113,7 +112,8 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         hero.content.setCustomSpacing(10, after: primary)
         hero.content.setCustomSpacing(18, after: row)
         hero.content.setCustomSpacing(8, after: overview)
-        [overview, info].forEach { $0.widthAnchor.constraint(equalTo: hero.content.widthAnchor).isActive = true }
+        // Both rows of buttons run the full width, so their edges line up.
+        [primary, row, overview, info].forEach { $0.widthAnchor.constraint(equalTo: hero.content.widthAnchor).isActive = true }
 
         primary.addAction(UIAction { [weak self] _ in self?.primaryTapped() }, for: .primaryActionTriggered)
         secondary.addAction(UIAction { [weak self] _ in
@@ -443,8 +443,8 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             cell.configure(symbol: "popcorn", title: "After-Credits Scene", detail: line)
         }
         let ratingReg = UICollectionView.CellRegistration<RatingCell, Item> { [unowned self] cell, _, _ in
-            cell.configure(Int(tracked?.rating ?? 0))
-            cell.onChange = { [weak self] value in
+            cell.row.set(Int(tracked?.rating ?? 0))
+            cell.row.onChange = { [weak self] value in
                 guard let self else { return }
                 Store.shared.setRating(value, for: detail?.title ?? item)
             }
@@ -539,8 +539,8 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         guard let selected = dataSource.itemIdentifier(for: indexPath) else { return }
         switch selected {
         case .episode(let e): toggle(e)
-        case .provider:
-            if let link = detail?.providers[Prefs.region]?.link, let url = URL(string: link) { UIApplication.shared.open(url) }
+        case .provider(let p):
+            if let url = p.searchURL(for: item.name) ?? detail?.providers[Prefs.region]?.link.flatMap(URL.init(string:)) { UIApplication.shared.open(url) }
         case .title(let t):
             openDetail(t) { [weak self] in
                 self?.dataSource.indexPath(for: selected).flatMap { collectionView.cellForItem(at: $0) }

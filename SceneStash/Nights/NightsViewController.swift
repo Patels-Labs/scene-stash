@@ -1,22 +1,12 @@
 import CoreData
 import UIKit
 
-extension NightStatus {
-    var tint: UIColor {
-        switch self {
-        case .noTickets: Theme.secondary
-        case .ticketsInHand: UIColor(red: 0.56, green: 0.83, blue: 0.86, alpha: 1)
-        case .lightsDown, .creditsRolled: Theme.accent
-        }
-    }
-}
-
-/// Nights out with friends: what's coming up as ticket stubs, and the scrapbook of nights gone by.
+/// Movie Nights: the next night out as a big poster card, the rest coming up, and past nights with everyone's ratings.
 final class NightsViewController: UIViewController, UICollectionViewDelegate {
-    nonisolated private enum Section: Hashable { case upcoming, scrapbook }
-    /// Separate cases per section: when the credits roll a night moves from stub to poster, and reconfiguring
+    nonisolated private enum Section: Hashable { case next, coming, past, empty }
+    /// Separate cases per section: when a night finishes it moves from a wide card to a poster, and reconfiguring
     /// one identifier across cell types crashes.
-    nonisolated private enum Item: Hashable { case upcoming(NSManagedObjectID), past(NSManagedObjectID), empty }
+    nonisolated private enum Item: Hashable { case next(NSManagedObjectID), coming(NSManagedObjectID), past(NSManagedObjectID), empty }
 
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
@@ -26,9 +16,11 @@ final class NightsViewController: UIViewController, UICollectionViewDelegate {
         super.viewDidLoad()
         installBackdrop()
         title = "Movie Nights"
-        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Plan a night", image: UIImage(systemName: "plus"), primaryAction: UIAction { [weak self] _ in self?.plan() })
+        navigationItem.largeTitleDisplayMode = .always
+        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Plan a Night", image: UIImage(systemName: "plus"), primaryAction: UIAction { [weak self] _ in self?.plan() })
         collectionView.backgroundColor = .clear
         collectionView.delegate = self
+        collectionView.contentInset.bottom = 100
         view.addSubview(collectionView)
         collectionView.pin(to: view)
         configureDataSource()
@@ -58,13 +50,18 @@ final class NightsViewController: UIViewController, UICollectionViewDelegate {
         let upcoming = nights.filter { $0.status() != .creditsRolled }
         let past = nights.filter { $0.status() == .creditsRolled }.reversed()
         var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
-        snapshot.appendSections([.upcoming])
-        snapshot.appendItems(upcoming.isEmpty ? [.empty] : upcoming.map { .upcoming($0.objectID) })
-        if !past.isEmpty {
-            snapshot.appendSections([.scrapbook])
-            snapshot.appendItems(past.map { .past($0.objectID) })
+        if let first = upcoming.first {
+            snapshot.appendSections([.next]); snapshot.appendItems([.next(first.objectID)])
+        } else {
+            snapshot.appendSections([.empty]); snapshot.appendItems([.empty])
         }
-        snapshot.reconfigureItems(snapshot.itemIdentifiers)
+        if upcoming.count > 1 {
+            snapshot.appendSections([.coming]); snapshot.appendItems(upcoming.dropFirst().map { .coming($0.objectID) })
+        }
+        if !past.isEmpty {
+            snapshot.appendSections([.past]); snapshot.appendItems(past.map { .past($0.objectID) })
+        }
+        snapshot.reconfigureItems(snapshot.itemIdentifiers.filter { Set(dataSource.snapshot().itemIdentifiers).contains($0) })
         dataSource.apply(snapshot, animatingDifferences: view.window != nil)
     }
 
@@ -84,50 +81,64 @@ final class NightsViewController: UIViewController, UICollectionViewDelegate {
     // MARK: Layout
 
     private func makeLayout() -> UICollectionViewLayout {
-        UICollectionViewCompositionalLayout { [weak self] index, _ in
-            let section = self?.dataSource?.sectionIdentifier(for: index) ?? .upcoming
-            switch section {
-            case .upcoming:
-                let item = NSCollectionLayoutItem(layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .estimated(132)))
-                let group = NSCollectionLayoutGroup.vertical(layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .estimated(132)), subitems: [item])
-                let s = NSCollectionLayoutSection(group: group)
-                s.interGroupSpacing = 12
-                s.contentInsets = .init(top: 8, leading: 16, bottom: 32, trailing: 16)
-                s.boundarySupplementaryItems = [Layouts.headerItem()]
+        UICollectionViewCompositionalLayout { [weak self] index, env in
+            switch self?.dataSource?.sectionIdentifier(for: index) {
+            case .coming: return Shelf.wides(captions: 2)
+            case .past: return Shelf.posters(captions: 2)
+            case .next:
+                let width = env.container.effectiveContentSize.width - Shelf.margin * 2
+                let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(min(width * 1.15, 480)))
+                let s = NSCollectionLayoutSection(group: .vertical(layoutSize: size, subitems: [.init(layoutSize: size)]))
+                s.contentInsets = .init(top: 8, leading: Shelf.margin, bottom: 32, trailing: Shelf.margin)
                 return s
-            case .scrapbook:
-                let s = Layouts.posterGrid()
-                s.boundarySupplementaryItems = [Layouts.headerItem()]
+            case .empty, nil:
+                let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(100))
+                let s = NSCollectionLayoutSection(group: .vertical(layoutSize: size, subitems: [.init(layoutSize: size)]))
+                s.contentInsets = .init(top: 8, leading: Shelf.margin, bottom: 32, trailing: Shelf.margin)
                 return s
             }
         }
     }
 
     private func configureDataSource() {
-        let stubReg = UICollectionView.CellRegistration<NightStubCell, NSManagedObjectID> { [weak self] cell, _, id in
+        let nextReg = UICollectionView.CellRegistration<NightFeatureCell, NSManagedObjectID> { [weak self] cell, _, id in
             if let night = self?.night(id) { cell.configure(night) }
         }
-        let posterReg = UICollectionView.CellRegistration<PosterCell, NSManagedObjectID> { [weak self] cell, _, id in
-            if let night = self?.night(id) { cell.configure(night.title) }
+        let comingReg = UICollectionView.CellRegistration<WideLockup, NSManagedObjectID> { [weak self] cell, _, id in
+            guard let night = self?.night(id) else { return }
+            let when = (night.showtime ?? .now).formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).hour().minute())
+            let stage = night.status()
+            let who = night.booked ? night.bookedBy.map { "\(stage.label) by \($0)" } : nil
+            cell.configure(.init(backdrop: TMDB.imageURL(night.backdropPath ?? night.posterPath, .backdrop), title: night.name ?? "", badge: stage.label,
+                                 caption: when, detail: who ?? night.cinema ?? "Cinema not picked yet"))
+        }
+        let pastReg = UICollectionView.CellRegistration<PosterLockup, NSManagedObjectID> { [weak self] cell, _, id in
+            guard let night = self?.night(id) else { return }
+            let ratings = (night.notes ?? []).map { Int($0.rating) }.filter { $0 > 0 }
+            let mine = Store.shared.myNote(on: night).map { Int($0.rating) } ?? 0
+            let group = ratings.isEmpty ? nil : Double(ratings.reduce(0, +)) / Double(ratings.count)
+            let line = [mine > 0 ? "You: \(mine)" : nil, group.map { "Group: " + $0.formatted(.number.precision(.fractionLength(0...1))) }].compactMap { $0 }.joined(separator: " · ")
+            cell.configure(night.title, caption: (night.showtime ?? .now).formatted(.dateTime.day().month(.abbreviated)), detail: line.isEmpty ? nil : line, tint: Theme.accent)
         }
         let emptyReg = UICollectionView.CellRegistration<EmptyCell, Item> { cell, _, _ in
-            cell.configure("Nothing booked", "Plan a night out, invite your friends, and keep the cinema, screen and seats on one ticket.")
+            cell.configure("Nothing booked", "Plan a night out, invite your friends, and keep the cinema, screen and seats in one place.")
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { cv, indexPath, item in
             switch item {
-            case .empty: return cv.dequeueConfiguredReusableCell(using: emptyReg, for: indexPath, item: item)
-            case .upcoming(let id): return cv.dequeueConfiguredReusableCell(using: stubReg, for: indexPath, item: id)
-            case .past(let id): return cv.dequeueConfiguredReusableCell(using: posterReg, for: indexPath, item: id)
+            case .empty: cv.dequeueConfiguredReusableCell(using: emptyReg, for: indexPath, item: item)
+            case .next(let id): cv.dequeueConfiguredReusableCell(using: nextReg, for: indexPath, item: id)
+            case .coming(let id): cv.dequeueConfiguredReusableCell(using: comingReg, for: indexPath, item: id)
+            case .past(let id): cv.dequeueConfiguredReusableCell(using: pastReg, for: indexPath, item: id)
             }
         }
-        let headerReg = UICollectionView.SupplementaryRegistration<SectionHeader>(elementKind: SectionHeader.kind) { [weak self] header, _, indexPath in
+        let headerReg = UICollectionView.SupplementaryRegistration<ShelfHeader>(elementKind: ShelfHeader.kind) { [weak self] header, _, indexPath in
             switch self?.dataSource.sectionIdentifier(for: indexPath.section) {
-            case .scrapbook: header.configure("The Scrapbook", caption: "Nights gone by")
-            default: header.configure("Coming up", caption: "With friends")
+            case .past: header.configure("Past Nights")
+            default: header.configure("Coming Up")
             }
         }
-        dataSource.supplementaryViewProvider = { cv, _, indexPath in
-            cv.dequeueConfiguredReusableSupplementary(using: headerReg, for: indexPath)
+        dataSource.supplementaryViewProvider = { cv, kind, indexPath in
+            kind == ShelfHeader.kind ? cv.dequeueConfiguredReusableSupplementary(using: headerReg, for: indexPath) : nil
         }
     }
 
@@ -137,68 +148,52 @@ final class NightsViewController: UIViewController, UICollectionViewDelegate {
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         switch dataSource.itemIdentifier(for: indexPath) {
-        case .upcoming(let id), .past(let id): if let night = night(id) { open(night) }
+        case .next(let id), .coming(let id), .past(let id): if let night = night(id) { Haptics.tap(); open(night) }
         default: break
         }
     }
 }
 
-/// A night as a ticket stub: poster, what and where, who's going, and the date torn off on the right.
-final class NightStubCell: UICollectionViewCell {
-    private let poster = UIImageView()
-    private let status = UILabel.make(Theme.label(.caption2, weight: .bold))
-    private let name = UILabel.make(Theme.display(26, weight: .black), Theme.text, lines: 2)
+/// The next night out, big: the film's poster with its status, when and where, and who's going.
+final class NightFeatureCell: UICollectionViewCell {
+    private let art = ArtView(radius: 18)
+    private let shade = CAGradientLayer()
+    private let badge = GlassLabel()
+    private let name = UILabel.make(Theme.text(.largeTitle, weight: .heavy), Theme.text, lines: 2)
+    private let logo = UIImageView()
+    private var artTask: Task<Void, Never>?
+    private let when = UILabel.make(Theme.text(.subheadline), UIColor(white: 1, alpha: 0.85), lines: 2)
     private let place = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 2)
     private let crew = UIStackView()
-    private let month = UILabel.make(Theme.label(.caption2, weight: .bold), Theme.secondary)
-    private let day = UILabel.make(Theme.display(36, weight: .black))
-    private let time = UILabel.make(Theme.label(.caption2, weight: .bold), Theme.secondary)
-    private let card = CAShapeLayer()
-    private let perforation = TicketShape.perforation()
-    private let stub = UIView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        contentView.layer.addSublayer(card)
-        card.lineWidth = 1.5
-        card.lineDashPattern = [5, 4]
-
-        poster.contentMode = .scaleAspectFill
-        poster.clipsToBounds = true
-        poster.layer.cornerRadius = 8
-        poster.backgroundColor = Theme.surface
-        poster.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([poster.widthAnchor.constraint(equalToConstant: 62), poster.heightAnchor.constraint(equalToConstant: 93)])
-        // Keeps the poster its own size at the top instead of stretching (or stretching the card) to match.
-        let posterColumn = UIStackView(arrangedSubviews: [poster, UIView()])
-        posterColumn.axis = .vertical
-
-        crew.spacing = -6
-        let main = UIStackView(arrangedSubviews: [status, name, place, crew])
-        main.axis = .vertical
-        main.spacing = 5
-        main.setCustomSpacing(10, after: place)
-        main.alignment = .leading
-
-        let date = UIStackView(arrangedSubviews: [month, day, time])
-        date.axis = .vertical
-        date.alignment = .center
-        date.spacing = 4
-        stub.addSubview(date)
-        date.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(art)
+        art.pin(to: contentView)
+        // Dark enough at the bottom that the words never sit on busy art.
+        shade.colors = [UIColor(white: 0, alpha: 0.25), UIColor.clear, UIColor(white: 0, alpha: 0.75), UIColor(white: 0, alpha: 0.95)].map(\.cgColor)
+        shade.locations = [0, 0.2, 0.62, 1]
+        art.layer.addSublayer(shade)
+        [name, when, place].forEach { $0.textAlignment = .center }
+        logo.contentMode = .scaleAspectFit
+        logo.isHidden = true
+        crew.spacing = -9
+        let text = UIStackView(arrangedSubviews: [logo, name, when, place, crew])
+        text.axis = .vertical
+        text.alignment = .center
+        text.spacing = 6
+        text.setCustomSpacing(12, after: logo)
+        text.setCustomSpacing(12, after: place)
+        [text, badge].forEach { art.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
         NSLayoutConstraint.activate([
-            date.centerXAnchor.constraint(equalTo: stub.centerXAnchor), date.centerYAnchor.constraint(equalTo: stub.centerYAnchor),
-            stub.widthAnchor.constraint(equalToConstant: 72),
+            text.leadingAnchor.constraint(equalTo: art.leadingAnchor, constant: 20),
+            text.trailingAnchor.constraint(equalTo: art.trailingAnchor, constant: -20),
+            text.bottomAnchor.constraint(equalTo: art.bottomAnchor, constant: -20),
+            badge.topAnchor.constraint(equalTo: art.topAnchor, constant: 16),
+            badge.leadingAnchor.constraint(equalTo: art.leadingAnchor, constant: 16),
+            logo.widthAnchor.constraint(lessThanOrEqualToConstant: 240),
+            logo.heightAnchor.constraint(equalToConstant: 80),
         ])
-        contentView.layer.addSublayer(perforation)
-
-        let row = UIStackView(arrangedSubviews: [posterColumn, main, stub])
-        row.spacing = 14
-        row.alignment = .fill
-        row.isLayoutMarginsRelativeArrangement = true
-        row.directionalLayoutMargins = .init(top: 12, leading: 12, bottom: 12, trailing: 0)
-        contentView.addSubview(row)
-        row.pin(to: contentView)
         isAccessibilityElement = true
         accessibilityTraits = .button
     }
@@ -206,42 +201,48 @@ final class NightStubCell: UICollectionViewCell {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        card.path = TicketShape.path(in: contentView.bounds.insetBy(dx: 0.75, dy: 0.75), corner: 16, notch: 9, notchAt: 0.5).cgPath
-        contentView.layoutIfNeeded()
-        let x = stub.frame.minX
-        let path = UIBezierPath()
-        path.move(to: CGPoint(x: x, y: 12))
-        path.addLine(to: CGPoint(x: x, y: contentView.bounds.height - 12))
-        perforation.path = path.cgPath
+        shade.frame = art.bounds
     }
 
     func configure(_ night: MovieNight) {
-        let stage = night.status()
-        let tint = stage.tint
-        poster.setImage(TMDB.imageURL(night.posterPath, .poster))
-        status.setCaps(stage.label)
-        status.textColor = tint
-        name.setDisplay(night.name?.uppercased())
-        place.text = night.whereLine ?? "Cinema not picked yet"
-
-        crew.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for (i, guest) in Store.shared.guests(for: night).prefix(6).enumerated() {
-            crew.addArrangedSubview(Avatar(guest.initial, index: i, size: 24))
+        badge.text = night.status().label
+        name.text = night.name
+        defer { shownID = night.tmdbID }
+        guard night.tmdbID != shownID else { return finish(night) }
+        art.show(TMDB.imageURL(night.posterPath, .hero), name: nil)
+        name.isHidden = false
+        logo.isHidden = true
+        // Like the hero: swap to text-free art with the film's logo, so its own title isn't printed twice.
+        artTask?.cancel()
+        artTask = Task { [weak self] in
+            let artwork = await TMDB.shared.artwork(Int(night.tmdbID), .movie)
+            guard !Task.isCancelled, let self else { return }
+            if let url = TMDB.imageURL(artwork.poster, .hero), let image = await ImageLoader.shared.image(url), !Task.isCancelled {
+                UIView.transition(with: art, duration: 0.3, options: .transitionCrossDissolve) { self.art.image = image }
+            }
+            guard let url = TMDB.imageURL(artwork.logo, .posterLarge), let image = await ImageLoader.shared.image(url), !Task.isCancelled else { return }
+            logo.image = image
+            logo.isHidden = false
+            name.isHidden = true
         }
-
-        let showtime = night.showtime ?? .now
-        month.setCaps(showtime.formatted(.dateTime.month(.abbreviated)))
-        day.text = showtime.formatted(.dateTime.day())
-        day.textColor = tint
-        time.setCaps(showtime.formatted(date: .omitted, time: .shortened))
-
-        card.fillColor = tint.withAlphaComponent(stage == .noTickets ? 0.05 : 0.12).cgColor
-        card.strokeColor = tint.withAlphaComponent(0.5).cgColor
-        perforation.strokeColor = tint.withAlphaComponent(0.6).cgColor
-        accessibilityLabel = "\(night.name ?? ""), \(stage.label), \(showtime.formatted(date: .abbreviated, time: .shortened)), \(place.text ?? "")"
+        finish(night)
     }
 
-    override var isHighlighted: Bool { didSet { Spring.press(self, isHighlighted, scale: 0.97) } }
+    private var shownID: Int64?
+
+    private func finish(_ night: MovieNight) {
+        let showtime = night.showtime ?? .now
+        when.text = showtime.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)) + " · Showtime " + showtime.formatted(date: .omitted, time: .shortened)
+            + (night.screen.map { " · Screen \($0)" } ?? "")
+        place.text = [night.cinema, night.seats.map { "Seats \($0)" }].compactMap { $0 }.joined(separator: " · ")
+        place.isHidden = place.text?.isEmpty ?? true
+        crew.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let guests = Store.shared.guests(for: night)
+        for (i, guest) in guests.prefix(6).enumerated() { crew.addArrangedSubview(Avatar(guest.initial, index: i, size: 30)) }
+        accessibilityLabel = [night.name, night.status().label, when.text, place.text, "\(guests.count) going"].compactMap { $0 }.joined(separator: ", ")
+    }
+
+    override var isHighlighted: Bool { didSet { Spring.press(self, isHighlighted, scale: 0.98) } }
 }
 
 /// A friend's initial in a coloured disc.
