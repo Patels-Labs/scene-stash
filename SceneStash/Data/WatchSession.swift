@@ -134,11 +134,14 @@ final class WatchSession {
         #endif
     }
 
-    /// Saves a poster where the Live Activity and widgets can read it. Live Activities need it small.
-    func savePoster(_ url: URL, id: Int, width: CGFloat = 120) async {
+    /// Saves a poster where the Live Activity and widgets can read it, `width` pixels across. WidgetKit won't
+    /// draw a widget holding too large an image: it leaves the grey placeholder up instead.
+    func savePoster(_ url: URL, id: Int, width: CGFloat = 360) async {
         guard let image = await ImageLoader.shared.image(url), let file = SharedBox.posterURL(id) else { return }
         let size = CGSize(width: width, height: width * 1.5)
-        let thumb = UIGraphicsImageRenderer(size: size).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let thumb = UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
         try? thumb.jpegData(compressionQuality: 0.75)?.write(to: file)
     }
 }
