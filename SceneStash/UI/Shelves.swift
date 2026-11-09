@@ -17,9 +17,9 @@ enum Shelf {
         row(width: wide.width, height: wide.height + extra(captions))
     }
 
-    /// People: a circle with a name and a line under it.
+    /// People: a circle with a name of up to two lines and their role under it.
     static func circles() -> NSCollectionLayoutSection {
-        row(width: poster.width, height: poster.width + extra(2))
+        row(width: poster.width, height: poster.width + extra(3))
     }
 
     /// One full-width card, for the thing that matters most in a section.
