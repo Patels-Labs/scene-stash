@@ -385,8 +385,9 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         applySnapshot()
         var snap = dataSource.snapshot()
         snap.reconfigureItems(snap.itemIdentifiers)
-        if snap.sectionIdentifiers.contains(.episodes) { snap.reloadSections([.episodes]) }
         dataSource.apply(snap, animatingDifferences: false)
+        // Reloading the section would redraw this header too, but sends the shelf back to its first episode.
+        collectionView.visibleSupplementaryViews(ofKind: SeasonHeader.kind).compactMap { $0 as? SeasonHeader }.forEach(configureSeasonHeader)
     }
 
     // MARK: Collection
@@ -477,12 +478,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             }
         }
         let seasonReg = UICollectionView.SupplementaryRegistration<SeasonHeader>(elementKind: SeasonHeader.kind) { [unowned self] header, _, _ in
-            let next = nextEpisode
-            let states = (seasonEpisodes[selectedSeason ?? 0] ?? []).map { e -> Int in
-                let key = EpisodeKey(season: e.seasonNumber, episode: e.episodeNumber)
-                return watched.contains(key) ? 2 : key == next ? 1 : 0
-            }
-            header.configure(season: selectedSeason ?? 1, menu: seasonMenu(), states: states)
+            configureSeasonHeader(header)
         }
 
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { cv, indexPath, item in
@@ -502,6 +498,15 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
                 ? cv.dequeueConfiguredReusableSupplementary(using: seasonReg, for: indexPath)
                 : cv.dequeueConfiguredReusableSupplementary(using: headerReg, for: indexPath)
         }
+    }
+
+    private func configureSeasonHeader(_ header: SeasonHeader) {
+        let next = nextEpisode
+        let states = (seasonEpisodes[selectedSeason ?? 0] ?? []).map { e -> Int in
+            let key = EpisodeKey(season: e.seasonNumber, episode: e.episodeNumber)
+            return watched.contains(key) ? 2 : key == next ? 1 : 0
+        }
+        header.configure(season: selectedSeason ?? 1, menu: seasonMenu(), states: states)
     }
 
     private func applySnapshot() {
