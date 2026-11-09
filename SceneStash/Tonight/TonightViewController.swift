@@ -32,8 +32,8 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             }
         }
     }
-    nonisolated private enum Section: Hashable { case hero, programme, night, watchlist, upcoming, trending }
-    nonisolated private enum Item: Hashable { case hero, slot(Slot), night(String), watchlist(Title), upcoming(Upcoming), trending(Title) }
+    nonisolated private enum Section: Hashable { case hero, night, watchlist, upcoming, trending }
+    nonisolated private enum Item: Hashable { case hero, night(String), watchlist(Title), upcoming(Upcoming), trending(Title) }
 
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
@@ -88,15 +88,23 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         tick()
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        heroCell?.onScreen = true
+    }
+
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         navigationController?.setNavigationBarHidden(false, animated: animated)
         clock?.invalidate()
+        heroCell?.onScreen = false
     }
+
+    private var heroCell: TonightHeroCell? { collectionView.visibleCells.lazy.compactMap { $0 as? TonightHeroCell }.first }
 
     private func tick() {
         var snap = dataSource.snapshot()
-        snap.reconfigureItems(snap.itemIdentifiers.filter { if case .slot = $0 { true } else { $0 == .hero } })
+        snap.reconfigureItems([.hero])
         dataSource.apply(snap, animatingDifferences: false)
     }
 
@@ -236,7 +244,11 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         for (slot, start) in zip(programme, times).prefix(4) {
             guard let title = slot.title else { continue }
             var tint = "F5B544"
-            if let url = TMDB.imageURL(title.posterPath, .poster), let color = await ImageLoader.shared.tint(for: url) { tint = color.hex }
+            if let url = TMDB.imageURL(title.posterPath, .poster) {
+                if let color = await ImageLoader.shared.tint(for: url) { tint = color.hex }
+                // Widgets fill with the poster. A running film's copy stays small for its Live Activity.
+                if WatchSession.shared.state?.id != title.id { await WatchSession.shared.savePoster(url, id: title.id, width: 360) }
+            }
             let code: String
             switch slot {
             case .episode(let u): code = "S\(u.episode.seasonNumber) E\(u.episode.episodeNumber)"
@@ -293,22 +305,25 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
 
     // MARK: Collection
 
-    /// What the page leads with: the first title on tonight's programme.
-    private var featured: Slot? { programme.first { $0.title != nil } }
-
-    private func start(of slot: Slot) -> Date {
-        programme.firstIndex(of: slot).map { startTimes()[$0] } ?? doors
+    /// The hero's pages: every title on tonight's programme, in order. A marathon can play one show twice, hence `nth`.
+    private var heroPages: [TonightHeroCell.Page] {
+        var seen: [Title: Int] = [:]
+        return zip(programme, startTimes()).compactMap { slot, starts in
+            guard let title = slot.title else { return nil }
+            defer { seen[title, default: 0] += 1 }
+            return .init(key: .init(title: title, nth: seen[title, default: 0]), slot: slot, starts: starts)
+        }
     }
 
     private func makeLayout() -> UICollectionViewLayout {
         UICollectionViewCompositionalLayout { [weak self] index, env in
             switch self?.dataSource?.sectionIdentifier(for: index) {
             case .hero, nil:
-                let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(760))
+                // One fixed height, so the page doesn't jump as the hero slides between titles.
+                let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(env.container.effectiveContentSize.width * 1.5))
                 let section = NSCollectionLayoutSection(group: .vertical(layoutSize: size, subitems: [.init(layoutSize: size)]))
                 section.contentInsets.bottom = 28
                 return section
-            case .programme: return Shelf.wides(captions: 2)
             case .night: return Shelf.feature(height: (env.container.effectiveContentSize.width - Shelf.margin * 2) * 9 / 16)
             case .upcoming: return Shelf.posters(captions: 2)
             case .watchlist, .trending: return Shelf.posters()
@@ -318,18 +333,15 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
 
     private func configureDataSource() {
         let heroReg = UICollectionView.CellRegistration<TonightHeroCell, Item> { [unowned self] cell, _, _ in
-            if let slot = featured {
-                cell.configure(slot, starts: start(of: slot), lightsUp: lightsUp)
-            } else {
-                cell.configureEmpty(trending.first)
+            cell.heading.text = marathon?.name ?? "Tonight"
+            cell.onPrimary = { [weak self] slot in self?.primary(slot) }
+            cell.onDone = { [weak self] slot in self?.finish(slot) }
+            cell.onOpen = { [weak self] title in
+                // Tapping tonight's night out goes to the night, not the film.
+                if let slot = self?.programme.first(where: { $0.title == title }), case .outing = slot { self?.primary(slot) } else { self?.openDetail(title) { nil } }
             }
-            cell.onPrimary = { [weak self] in self?.primary() }
-            cell.onDone = { [weak self] in if let slot = self?.featured { self?.finish(slot) } }
             cell.onSettings = { [weak self] in self?.present(UINavigationController(rootViewController: SettingsViewController()), animated: true) }
-        }
-        let slotReg = UICollectionView.CellRegistration<WideLockup, Item> { [unowned self] cell, _, item in
-            guard case .slot(let slot) = item else { return }
-            cell.configure(Self.lockup(slot, starts: start(of: slot)))
+            cell.show(heroPages, suggestion: trending.first)
         }
         let nightReg = UICollectionView.CellRegistration<WideLockup, Item> { cell, _, item in
             guard case .night(let uuid) = item, let night = Store.shared.night(uuid: uuid) else { return }
@@ -347,7 +359,6 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         }
         let headerReg = UICollectionView.SupplementaryRegistration<ShelfHeader>(elementKind: ShelfHeader.kind) { [unowned self] header, _, indexPath in
             switch dataSource.sectionIdentifier(for: indexPath.section) {
-            case .programme: header.configure(marathon?.name ?? "Up Next")
             case .night: header.configure("Movie Nights") { [weak self] in self?.openTab("nights") }
             case .watchlist: header.configure("Your Watchlist") { [weak self] in self?.openTab("stash") }
             case .upcoming: header.configure("Coming Soon")
@@ -358,7 +369,6 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { cv, indexPath, item in
             switch item {
             case .hero: cv.dequeueConfiguredReusableCell(using: heroReg, for: indexPath, item: item)
-            case .slot: cv.dequeueConfiguredReusableCell(using: slotReg, for: indexPath, item: item)
             case .night: cv.dequeueConfiguredReusableCell(using: nightReg, for: indexPath, item: item)
             case .upcoming, .trending, .watchlist: cv.dequeueConfiguredReusableCell(using: posterReg, for: indexPath, item: item)
             }
@@ -368,35 +378,9 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         }
     }
 
-    /// A programme slot as a wide card: start time and what it is underneath.
-    private static func lockup(_ slot: Slot, starts: Date) -> WideLockup.Model {
-        let at = starts <= .now ? "Now" : starts.formatted(date: .omitted, time: .shortened)
-        switch slot {
-        case .episode(let u):
-            return .init(backdrop: TMDB.imageURL(u.episode.stillPath, .backdrop) ?? TMDB.imageURL(u.show.backdropPath, .backdrop), title: u.show.name,
-                         meta: "S\(u.episode.seasonNumber), E\(u.episode.episodeNumber) · \(u.runtime.map { "\($0)m" } ?? "Episode")", caption: at, detail: u.episode.name)
-        case .film(let f):
-            let left = max(f.runtime - f.position / 60, 0)
-            return .init(backdrop: TMDB.imageURL(f.title.backdropPath, .backdrop), title: f.title.name,
-                         meta: f.position >= 60 ? "\(DateText.runtime(left)) left" : DateText.runtime(f.runtime),
-                         progress: f.position >= 60 ? Double(f.position) / Double(max(f.runtime * 60, 1)) : nil, caption: at, detail: "Film")
-        case .pick(let f):
-            return .init(backdrop: TMDB.imageURL(f.title.backdropPath, .backdrop), title: f.title.name, meta: DateText.runtime(f.runtime),
-                         caption: at, detail: "From your watchlist")
-        case .outing(let o):
-            return .init(backdrop: TMDB.imageURL(o.title.backdropPath, .backdrop), title: o.title.name, meta: "Movie night", badge: "Booked",
-                         caption: at, detail: o.place)
-        case .free, .intermission, .headOut:
-            return .init(backdrop: nil, title: "")
-        }
-    }
-
     private func applySnapshot() {
         var snap = NSDiffableDataSourceSnapshot<Section, Item>()
         snap.appendSections([.hero]); snap.appendItems([.hero])
-        // The rest of the programme as a shelf; gaps and intermissions show as times, not cards.
-        let rest = programme.filter { $0.title != nil && $0 != featured }
-        if !rest.isEmpty { snap.appendSections([.programme]); snap.appendItems(rest.map(Item.slot)) }
         let tonight = Store.shared.tonightsNight()?.uuid
         if let next = Store.shared.nights().first(where: { $0.status() != .creditsRolled && $0.uuid != tonight }), let uuid = next.uuid {
             snap.appendSections([.night]); snap.appendItems([.night(uuid)])
@@ -406,16 +390,16 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         if !ready.isEmpty { snap.appendSections([.watchlist]); snap.appendItems(ready.map(Item.watchlist)) }
         if !upcoming.isEmpty { snap.appendSections([.upcoming]); snap.appendItems(upcoming.prefix(10).map(Item.upcoming)) }
         if programme.isEmpty, !trending.isEmpty { snap.appendSections([.trending]); snap.appendItems(trending.map(Item.trending)) }
-        snap.reconfigureItems(snap.itemIdentifiers.filter { if case .slot = $0 { true } else { $0 == .hero } })
+        snap.reconfigureItems([.hero])
         dataSource.apply(snap, animatingDifferences: !UIAccessibility.isReduceMotionEnabled)
     }
 
     // MARK: Actions
 
     /// The hero's white button: start a film on the clock, open a show, or head to the cinema.
-    private func primary() {
+    private func primary(_ slot: Slot?) {
         Haptics.tap()
-        switch featured {
+        switch slot {
         case .film(let f), .pick(let f):
             Task {
                 let detail = try? await TMDB.shared.detail(f.title.id, .movie)
@@ -441,15 +425,10 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         guard let item = dataSource.itemIdentifier(for: indexPath) else { return }
         let title: Title
         switch item {
-        case .slot(.outing(let o)):
-            guard let night = Store.shared.night(uuid: o.uuid) else { return }
-            navigationController?.pushViewController(NightViewController(night: night), animated: true)
-            return
         case .night(let uuid):
             guard let night = Store.shared.night(uuid: uuid) else { return }
             navigationController?.pushViewController(NightViewController(night: night), animated: true)
             return
-        case .slot(let s): guard let t = s.title else { return }; title = t
         case .upcoming(let u): title = u.title
         case .trending(let t), .watchlist(let t): title = t
         case .hero: return
@@ -464,12 +443,6 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         switch indexPaths.first.flatMap({ dataSource.itemIdentifier(for: $0) }) {
         case .trending(let t), .watchlist(let t): return titleMenu(t)
         case .upcoming(let u): return titleMenu(u.title)
-        case .slot(let s):
-            guard let t = s.title else { return nil }
-            if case .outing = s { return nil }
-            return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-                UIMenu(title: t.name, children: [UIAction(title: "Mark as Watched", image: UIImage(systemName: "checkmark.circle")) { _ in self?.finish(s) }])
-            }
         default: return nil
         }
     }
@@ -477,49 +450,205 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
 
 // MARK: - Hero
 
-/// The top of Tonight: whatever leads the programme, big, with Resume and Mark as Watched.
-final class TonightHeroCell: UICollectionViewCell {
+/// The top of Tonight: everything on the programme, big, one title to a page. The dots fill as each
+/// page's time runs out, the way the TV app's hero does, and stop whenever you're holding or reading it.
+final class TonightHeroCell: UICollectionViewCell, UICollectionViewDelegate, UIPageControlTimerProgressDelegate {
+    nonisolated struct Key: Hashable { let title: Title?; let nth: Int }
+    struct Page { let key: Key; let slot: TonightViewController.Slot; let starts: Date }
+
+    var onPrimary: ((TonightViewController.Slot?) -> Void)?
+    var onDone: ((TonightViewController.Slot) -> Void)?
+    var onOpen: ((Title) -> Void)?
+    var onSettings: (() -> Void)?
+    /// False while another screen is in front.
+    var onScreen = true { didSet { updateTimer() } }
+    let heading = UILabel.make(Theme.text(.largeTitle, weight: .bold))
+
+    private let settings = CapsuleButton.circle("gearshape", label: "Settings")
+    private let control = UIPageControl()
+    private let timer = UIPageControlTimerProgress(preferredDuration: 8)
+    private let pager: UICollectionView
+    private var data: UICollectionViewDiffableDataSource<Int, Key>!
+    private var pages: [Key: Page] = [:]
+    private var suggestion: Title?
+    private var dragging = false, menuOpen = false
+    /// The pager is on its way somewhere by itself, so its position shouldn't move the dots.
+    private var autoScrolling = false
+
+    override init(frame: CGRect) {
+        let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .fractionalHeight(1))
+        let section = NSCollectionLayoutSection(group: .horizontal(layoutSize: size, subitems: [.init(layoutSize: size)]))
+        let config = UICollectionViewCompositionalLayoutConfiguration()
+        config.scrollDirection = .horizontal
+        pager = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout(section: section, configuration: config))
+        super.init(frame: frame)
+
+        pager.isPagingEnabled = true
+        pager.showsHorizontalScrollIndicator = false
+        pager.contentInsetAdjustmentBehavior = .never
+        pager.backgroundColor = .clear
+        pager.delegate = self
+        contentView.addSubview(pager)
+        pager.pin(to: contentView)
+        let page = UICollectionView.CellRegistration<TonightHeroPageCell, Key> { [weak self] cell, _, key in
+            guard let self else { return }
+            if let page = pages[key] { cell.configure(page.slot, starts: page.starts) } else { cell.configureEmpty(suggestion) }
+            cell.onPrimary = { [weak self] in self?.onPrimary?(self?.pages[key]?.slot) }
+            cell.onDone = { [weak self] in if let slot = self?.pages[key]?.slot { self?.onDone?(slot) } }
+            cell.onOpen = { [weak self] in if let slot = self?.pages[key]?.slot, let title = slot.title { self?.onOpen?(title) } }
+            cell.onMenu = { [weak self] open in self?.menuOpen = open; self?.updateTimer() }
+        }
+        data = UICollectionViewDiffableDataSource(collectionView: pager) { cv, indexPath, key in
+            cv.dequeueConfiguredReusableCell(using: page, for: indexPath, item: key)
+        }
+
+        heading.accessibilityTraits = .header
+        control.hidesForSinglePage = true
+        control.pageIndicatorTintColor = UIColor(white: 1, alpha: 0.4)
+        control.currentPageIndicatorTintColor = .white
+        control.addAction(UIAction { [weak self] _ in self?.go(to: self?.control.currentPage ?? 0) }, for: .valueChanged)
+        timer.resetsToInitialPageAfterEnd = true
+        timer.delegate = self
+        // Pages that move by themselves are out for anyone who's asked for less motion or is using VoiceOver.
+        if !UIAccessibility.isReduceMotionEnabled && !UIAccessibility.isVoiceOverRunning { control.progress = timer }
+
+        [heading, settings, control].forEach { contentView.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        NSLayoutConstraint.activate([
+            heading.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 62),
+            heading.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: Shelf.margin),
+            heading.trailingAnchor.constraint(lessThanOrEqualTo: settings.leadingAnchor, constant: -12),
+            settings.centerYAnchor.constraint(equalTo: heading.centerYAnchor),
+            settings.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -Shelf.margin),
+            control.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            control.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10),
+        ])
+        settings.addAction(UIAction { [weak self] _ in self?.onSettings?() }, for: .primaryActionTriggered)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func show(_ new: [Page], suggestion: Title?) {
+        self.suggestion = suggestion
+        pages = Dictionary(uniqueKeysWithValues: new.map { ($0.key, $0) })
+        let keys = new.isEmpty ? [Key(title: nil, nth: 0)] : new.map(\.key)
+        let existing = Set(data.snapshot().itemIdentifiers)
+        var snap = NSDiffableDataSourceSnapshot<Int, Key>()
+        snap.appendSections([0])
+        snap.appendItems(keys)
+        snap.reconfigureItems(keys.filter(existing.contains))
+        data.apply(snap, animatingDifferences: !existing.isEmpty && !UIAccessibility.isReduceMotionEnabled)
+        control.numberOfPages = keys.count
+        updateTimer()
+        Task { for page in new { if let title = page.slot.title { await HeroView.prepare(title) } } }
+    }
+
+    private func updateTimer() {
+        if onScreen && !dragging && !menuOpen { timer.resumeTimer() } else { timer.pauseTimer() }
+    }
+
+    private func go(to page: Int) {
+        let x = CGFloat(page) * pager.bounds.width
+        guard pager.contentOffset.x != x else { return }
+        autoScrolling = true
+        pager.setContentOffset(CGPoint(x: x, y: 0), animated: true)
+    }
+
+    func pageControlTimerProgress(_ progress: UIPageControlTimerProgress, shouldAdvanceToPage page: Int) -> Bool {
+        go(to: page)
+        return true
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        collectionView.deselectItem(at: indexPath, animated: false)
+        guard let key = data.itemIdentifier(for: indexPath) else { return }
+        if let title = key.title ?? suggestion { Haptics.tap(); onOpen?(title) }
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard !autoScrolling, scrollView.bounds.width > 0 else { return }
+        let page = Int((scrollView.contentOffset.x / scrollView.bounds.width).rounded())
+        if page != control.currentPage { control.currentPage = page }
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        autoScrolling = false
+        dragging = true
+        updateTimer()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        if !decelerate { settled() }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { settled() }
+    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) { autoScrolling = false }
+
+    private func settled() {
+        dragging = false
+        updateTimer()
+    }
+}
+
+/// A round glass button that opens a menu and says when it has.
+private final class MenuCircleButton: UIButton {
+    var onMenu: ((Bool) -> Void)?
+
+    override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willDisplayMenuFor configuration: UIContextMenuConfiguration, animator: (any UIContextMenuInteractionAnimating)?) {
+        super.contextMenuInteraction(interaction, willDisplayMenuFor: configuration, animator: animator)
+        onMenu?(true)
+    }
+
+    override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willEndFor configuration: UIContextMenuConfiguration, animator: (any UIContextMenuInteractionAnimating)?) {
+        super.contextMenuInteraction(interaction, willEndFor: configuration, animator: animator)
+        onMenu?(false)
+    }
+}
+
+/// One title on the hero, with its main button and a menu for the rest, as in the TV app.
+final class TonightHeroPageCell: UICollectionViewCell {
     var onPrimary: (() -> Void)?
     var onDone: (() -> Void)?
-    var onSettings: (() -> Void)?
+    var onOpen: (() -> Void)?
+    var onMenu: ((Bool) -> Void)? { didSet { more.onMenu = onMenu } }
     private let hero = HeroView()
-    private let heading = UILabel.make(Theme.text(.largeTitle, weight: .bold))
-    private let settings = CapsuleButton.circle("gearshape", label: "Settings")
     private let primary = CapsuleButton.primary("Resume", image: "play.fill")
-    private let done = CapsuleButton.circle("checkmark", label: "Mark as Watched")
+    private let more = MenuCircleButton()
+    /// What this page showed last, so the next episode of the same show fades in rather than snapping.
+    private var current: TonightViewController.Slot?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         contentView.addSubview(hero)
         hero.pin(to: contentView)
-        heading.text = "Tonight"
-        heading.accessibilityTraits = .header
-        let top = UIStackView(arrangedSubviews: [heading, UIView(), settings])
-        top.alignment = .center
-        contentView.addSubview(top)
-        top.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            top.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 62),
-            top.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: Shelf.margin),
-            top.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -Shelf.margin),
-        ])
-        let buttons = UIStackView(arrangedSubviews: [primary, done])
+        hero.contentBottom.constant = -48
+        more.configuration = CapsuleButton.circle("ellipsis", label: "").configuration
+        more.accessibilityLabel = "More"
+        more.showsMenuAsPrimaryAction = true
+        NSLayoutConstraint.activate([more.widthAnchor.constraint(equalToConstant: 44), more.heightAnchor.constraint(equalToConstant: 44)])
+        let buttons = UIStackView(arrangedSubviews: [primary, more])
         buttons.spacing = 12
         buttons.alignment = .center
         primary.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
         hero.content.addArrangedSubview(buttons)
         primary.addAction(UIAction { [weak self] _ in self?.onPrimary?() }, for: .primaryActionTriggered)
-        done.addAction(UIAction { [weak self] _ in self?.onDone?() }, for: .primaryActionTriggered)
-        settings.addAction(UIAction { [weak self] _ in self?.onSettings?() }, for: .primaryActionTriggered)
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(_ slot: TonightViewController.Slot, starts: Date, lightsUp: Date) {
+    func configure(_ slot: TonightViewController.Slot, starts: Date) {
         guard let title = slot.title else { return }
+        let nextUp = current?.title == title && current != slot
+        current = slot
+        guard nextUp else { return fill(slot, title: title, starts: starts) }
+        UIView.transition(with: hero, duration: 0.3, options: [.transitionCrossDissolve, .allowUserInteraction, .beginFromCurrentState]) {
+            self.fill(slot, title: title, starts: starts)
+        }
+    }
+
+    private func fill(_ slot: TonightViewController.Slot, title: Title, starts: Date) {
         let now = starts <= .now
         let ends = starts + TimeInterval(slot.minutes * 60)
         let timing = now ? "Done by \(ends.formatted(date: .omitted, time: .shortened))" : "Starts \(starts.formatted(date: .omitted, time: .shortened))"
         var meta: String
+        var watched = "Mark as Watched"
         switch slot {
         case .film(let f):
             meta = f.position >= 60 ? "Film · \(DateText.runtime(slot.minutes)) left" : "Film · \(DateText.runtime(f.runtime))"
@@ -533,22 +662,30 @@ final class TonightHeroCell: UICollectionViewCell {
             meta = "S\(u.episode.seasonNumber), E\(u.episode.episodeNumber) · \(u.episode.name)"
             primary.configuration?.title = "Start S\(u.episode.seasonNumber), E\(u.episode.episodeNumber)"
             primary.configuration?.image = UIImage(systemName: "play.fill")
+            watched = "Mark S\(u.episode.seasonNumber), E\(u.episode.episodeNumber) as Watched"
         case .outing(let o):
             meta = "Movie Night · Showtime \(starts.formatted(date: .omitted, time: .shortened))" + (o.place.map { "\n\($0)" } ?? "")
             primary.configuration?.title = "Your Night Out"
             primary.configuration?.image = UIImage(systemName: "person.2.fill")
         case .free, .intermission, .headOut: return
         }
-        if case .outing = slot {} else { meta += " · " + timing }
-        done.isHidden = { if case .outing = slot { true } else { false } }()
+        if case .outing = slot { more.isHidden = true } else {
+            meta += " · " + timing
+            more.isHidden = false
+            more.menu = UIMenu(children: [
+                UIAction(title: watched, image: UIImage(systemName: "checkmark.circle")) { [weak self] _ in self?.onDone?() },
+                UIAction(title: title.mediaType == .tv ? "Go to Show" : "Go to Film", image: UIImage(systemName: "info.circle")) { [weak self] _ in self?.onOpen?() },
+            ])
+        }
         hero.show(title, meta: meta)
     }
 
     /// Nothing in progress: lead with something people are watching and a way to find more.
     func configureEmpty(_ suggestion: Title?) {
+        current = nil
         primary.configuration?.title = "Find Something to Watch"
         primary.configuration?.image = UIImage(systemName: "magnifyingglass")
-        done.isHidden = true
+        more.isHidden = true
         if let suggestion {
             hero.show(suggestion, meta: "Nothing on tonight yet. Add a film or start a show and tonight plans itself.")
         } else {

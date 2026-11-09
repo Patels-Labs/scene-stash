@@ -125,9 +125,10 @@ final class WatchSession {
         #endif
     }
 
-    private func savePoster(_ url: URL, id: Int) async {
+    /// Saves a poster where the Live Activity and widgets can read it. Live Activities need it small.
+    func savePoster(_ url: URL, id: Int, width: CGFloat = 120) async {
         guard let image = await ImageLoader.shared.image(url), let file = SharedBox.posterURL(id) else { return }
-        let size = CGSize(width: 120, height: 180)
+        let size = CGSize(width: width, height: width * 1.5)
         let thumb = UIGraphicsImageRenderer(size: size).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
         try? thumb.jpegData(compressionQuality: 0.75)?.write(to: file)
     }

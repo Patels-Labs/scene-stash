@@ -220,7 +220,7 @@ final class RatingCell: UICollectionViewCell {
 final class EpisodeLockup: UICollectionViewCell {
     private let art = ArtView(radius: 12)
     private let shade = CAGradientLayer()
-    private let label = UILabel.make(Theme.label(.caption2, weight: .semibold), Theme.secondary)
+    private let label = UILabel.make(Theme.text(.caption1, weight: .semibold), Theme.secondary)
     private let name = UILabel.make(Theme.text(.body, weight: .semibold), Theme.text, lines: 2)
     private let blurb = UILabel.make(Theme.text(.footnote), UIColor(white: 1, alpha: 0.7), lines: 3)
     private let meta = UILabel.make(Theme.text(.footnote), UIColor(white: 1, alpha: 0.85))
@@ -261,7 +261,7 @@ final class EpisodeLockup: UICollectionViewCell {
 
     func configure(_ e: Episode, watched: Bool, aired: Bool, next: Bool, runtime: Int?) {
         art.show(TMDB.imageURL(e.stillPath, .backdrop), name: nil)
-        label.setCaps("Episode \(e.episodeNumber)", kern: 0.6)
+        label.text = "Episode \(e.episodeNumber)"
         name.text = e.name
         blurb.text = e.overview
         let length = (e.runtime ?? runtime).map { "\($0)m" }
@@ -356,6 +356,9 @@ final class ProviderRowCell: UICollectionViewCell {
         logo.backgroundColor = Theme.surfaceHigh
         chevron.tintColor = Theme.tertiary
         chevron.preferredSymbolConfiguration = .init(pointSize: 13, weight: .semibold)
+        chevron.contentMode = .center
+        chevron.setContentHuggingPriority(.required, for: .horizontal)
+        chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
         rule.backgroundColor = Card.rule
         let text = UIStackView(arrangedSubviews: [name, note])
         text.axis = .vertical
