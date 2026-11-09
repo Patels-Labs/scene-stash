@@ -3,7 +3,7 @@ import WidgetKit
 
 /// Tonight's programme: what you're in the middle of, laid out on the clock from now until lights up.
 final class TonightViewController: UIViewController, UICollectionViewDelegate {
-    nonisolated struct UpNext: Hashable { let show: Title; let episode: Episode; let remaining: Int; let runtime: Int? }
+    nonisolated struct UpNext: Hashable { let show: Title; let episode: Episode; let remaining: Int; let runtime: Int?; var position = 0 }
     nonisolated struct Film: Hashable { let title: Title; let position: Int; let runtime: Int }
     nonisolated struct Upcoming: Hashable { let title: Title; let date: Date; let label: String }
     /// Tonight's night out: blocked from doors until the lights come up.
@@ -15,7 +15,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
 
         var minutes: Int {
             switch self {
-            case .episode(let u): u.runtime ?? 45
+            case .episode(let u): max((u.runtime ?? 45) - u.position / 60, 1)
             case .film(let f): max(f.runtime - f.position / 60, 1)
             case .pick(let f): f.runtime
             case .free: 0
@@ -141,7 +141,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
                 guard let key = Progress.nextUp(seasons: seasons, watched: watched, aired: aired),
                       let season = try? await TMDB.shared.season(show: detail.id, number: key.season),
                       let episode = season.episodes.first(where: { $0.episodeNumber == key.episode }) else { continue }
-                next.append(UpNext(show: detail.title, episode: episode, remaining: Progress.remaining(seasons: seasons, watched: watched, aired: aired), runtime: episode.runtime ?? detail.runtime))
+                next.append(UpNext(show: detail.title, episode: episode, remaining: Progress.remaining(seasons: seasons, watched: watched, aired: aired), runtime: episode.runtime ?? detail.runtime, position: Int(tracked.position)))
             }
             upNext = next
             programme = buildProgramme()
@@ -396,7 +396,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
 
     // MARK: Actions
 
-    /// The hero's white button: start a film on the clock, open a show, or head to the cinema.
+    /// The hero's white button: start a film on the clock, open an episode, or head to the cinema.
     private func primary(_ slot: Slot?) {
         Haptics.tap()
         switch slot {
@@ -406,7 +406,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
                 let stinger = (detail?.midCredits ?? false) || (detail?.afterCredits ?? false)
                 withPass { Task { await WatchSession.shared.start(f.title, runtime: f.runtime, from: f.position, stinger: stinger) } }
             }
-        case .episode(let u): openDetail(u.show) { nil }
+        case .episode(let u): navigationController?.pushViewController(EpisodeViewController(show: u.show, episode: u.episode), animated: true)
         case .outing(let o): if let night = Store.shared.night(uuid: o.uuid) { navigationController?.pushViewController(NightViewController(night: night), animated: true) }
         case .free, .intermission, .headOut, nil: openSearch()
         }
@@ -661,8 +661,8 @@ final class TonightHeroPageCell: UICollectionViewCell {
             primary.configuration?.title = "Start Watching"
             primary.configuration?.image = UIImage(systemName: "play.fill")
         case .episode(let u):
-            meta = "S\(u.episode.seasonNumber), E\(u.episode.episodeNumber) · \(u.episode.name)"
-            primary.configuration?.title = "Start S\(u.episode.seasonNumber), E\(u.episode.episodeNumber)"
+            meta = "S\(u.episode.seasonNumber), E\(u.episode.episodeNumber) · " + (u.position >= 60 ? "\(DateText.runtime(slot.minutes)) left" : u.episode.name)
+            primary.configuration?.title = (u.position >= 60 ? "Resume" : "Start") + " S\(u.episode.seasonNumber), E\(u.episode.episodeNumber)"
             primary.configuration?.image = UIImage(systemName: "play.fill")
             watched = "Mark S\(u.episode.seasonNumber), E\(u.episode.episodeNumber) as Watched"
         case .outing(let o):

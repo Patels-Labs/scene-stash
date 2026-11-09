@@ -22,9 +22,13 @@ final class WatchSession {
         let tint: String
         var startedAt: Date
         var pausedAt: Date?
+        /// Set when this is an episode; `id` and `name` are then the show's.
+        var season: Int?
+        var episode: Int?
 
+        var key: EpisodeKey? { season.flatMap { s in episode.map { EpisodeKey(season: s, episode: $0) } } }
         var elapsed: TimeInterval { (pausedAt ?? .now).timeIntervalSince(startedAt) }
-        var title: Title { Title(id: id, mediaType: .movie, name: name, posterPath: poster, backdropPath: backdrop) }
+        var title: Title { Title(id: id, mediaType: season == nil ? .movie : .tv, name: name, posterPath: poster, backdropPath: backdrop) }
         #if !targetEnvironment(macCatalyst)
         var content: NowShowingAttributes.ContentState { .init(startedAt: startedAt, pausedAt: pausedAt) }
         #endif
@@ -51,7 +55,7 @@ final class WatchSession {
         WatchHooks.finish = { [weak self] in await self?.finish() }
     }
 
-    func start(_ title: Title, runtime: Int, from seconds: Int, stinger: Bool) async {
+    func start(_ title: Title, runtime: Int, from seconds: Int, stinger: Bool, episode: EpisodeKey? = nil) async {
         await stop()
         var tint = "F5B544"
         if let url = TMDB.imageURL(title.posterPath, .poster) {
@@ -59,12 +63,13 @@ final class WatchSession {
             await savePoster(url, id: title.id)
         }
         state = State(id: title.id, name: title.name, poster: title.posterPath, backdrop: title.backdropPath, runtime: runtime,
-                      stinger: stinger, tint: tint, startedAt: Date.now.addingTimeInterval(-TimeInterval(seconds)), pausedAt: nil)
+                      stinger: stinger, tint: tint, startedAt: Date.now.addingTimeInterval(-TimeInterval(seconds)), pausedAt: nil,
+                      season: episode?.season, episode: episode?.episode)
         Store.shared.setPosition(max(seconds, 1), for: title, runtime: runtime)
         Haptics.thunk()
         #if !targetEnvironment(macCatalyst) // Live Activities are iPhone-only; the Mac preview just keeps time.
         guard let state, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        let attributes = NowShowingAttributes(id: state.id, name: state.name, runtimeMinutes: runtime, tint: tint, stinger: stinger)
+        let attributes = NowShowingAttributes(id: state.id, name: episode.map { "\(state.name) · S\($0.season), E\($0.episode)" } ?? state.name, runtimeMinutes: runtime, tint: tint, stinger: stinger)
         _ = try? Activity.request(attributes: attributes, content: .init(state: state.content, staleDate: attributes.end(state.content).addingTimeInterval(3600)))
         #endif
     }
@@ -85,10 +90,14 @@ final class WatchSession {
         await update()
     }
 
-    /// Marks the film seen and lets the activity show a last "finished" frame before it goes.
+    /// Marks the film or episode seen and lets the activity show a last "finished" frame before it goes.
     func finish() async {
         guard let s = state else { return }
-        Store.shared.track(s.title, status: .seen, runtime: s.runtime)
+        if let key = s.key {
+            Store.shared.setWatched([key], watched: true, show: s.title, runtime: s.runtime)
+        } else {
+            Store.shared.track(s.title, status: .seen, runtime: s.runtime)
+        }
         Haptics.success()
         #if !targetEnvironment(macCatalyst)
         var final = s.content
