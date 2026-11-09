@@ -244,11 +244,8 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         for (slot, start) in zip(programme, times).prefix(4) {
             guard let title = slot.title else { continue }
             var tint = "F5B544"
-            if let url = TMDB.imageURL(title.posterPath, .poster) {
-                if let color = await ImageLoader.shared.tint(for: url) { tint = color.hex }
-                // Widgets fill with the poster. A running film's copy stays small for its Live Activity.
-                if WatchSession.shared.state?.id != title.id { await WatchSession.shared.savePoster(url, id: title.id, width: 360) }
-            }
+            if let url = TMDB.imageURL(title.posterPath, .poster), let color = await ImageLoader.shared.tint(for: url) { tint = color.hex }
+            await saveWidgetArt(title)
             let code: String
             switch slot {
             case .episode(let u): code = "S\(u.episode.seasonNumber) E\(u.episode.episodeNumber)"
@@ -260,6 +257,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         }
         if let next = upcoming.first(where: { $0.label.contains("premiere") || $0.label == "In cinemas" }) ?? upcoming.first {
             snap.premiere = .init(id: next.title.id, name: next.title.name, label: next.label, date: next.date)
+            await saveWidgetArt(next.title)
         }
         if let u = upNext.first, let detail = details[u.show.id] {
             let season = u.episode.seasonNumber
@@ -269,9 +267,16 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
                 watched.contains(EpisodeKey(season: season, episode: e)) ? 1 : e == u.episode.episodeNumber ? 2 : 0
             }
             snap.card = .init(id: detail.id, name: detail.name, season: season, holes: count == 0 ? [] : holes, left: u.remaining)
+            await saveWidgetArt(u.show)
         }
         snap.save()
         WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    /// Widgets fill with the poster, and can't download one themselves. A running title's copy stays as its Live Activity needs it.
+    private func saveWidgetArt(_ title: Title) async {
+        guard WatchSession.shared.state?.id != title.id, let url = TMDB.imageURL(title.posterPath, .hero) else { return }
+        await WatchSession.shared.savePoster(url, id: title.id, width: 600)
     }
 
     /// The programme starts now in the evening; earlier in the day it waits for doors at eight.
