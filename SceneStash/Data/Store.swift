@@ -8,7 +8,7 @@ enum TrackStatus: String, CaseIterable {
         switch self {
         case .watchlist: "Watchlist"
         case .watching: "Watching"
-        case .seen: "Seen"
+        case .seen: "Watched"
         }
     }
     var symbol: String {

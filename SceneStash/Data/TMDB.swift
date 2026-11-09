@@ -82,6 +82,24 @@ nonisolated struct Provider: Decodable, Hashable, Sendable {
     let providerName: String
     let logoPath: String?
     let displayPriority: Int?
+
+    /// The service's own search for a title, so a tap lands in its app (or site) rather than on TMDB.
+    /// TMDB doesn't give per-service links; unknown services return nil and fall back to TMDB's page.
+    func searchURL(for title: String) -> URL? {
+        let q = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? title
+        let name = providerName.lowercased()
+        // Channels sold through another store open in that store, so check those first.
+        let search: [(String, String)] = [
+            ("amazon", "https://www.primevideo.com/search?phrase="), ("prime video", "https://www.primevideo.com/search?phrase="),
+            ("apple tv", "https://tv.apple.com/search?term="), ("netflix", "https://www.netflix.com/search?q="),
+            ("disney", "https://www.disneyplus.com/search?q="), ("paramount", "https://www.paramountplus.com/search/?q="),
+            ("hulu", "https://www.hulu.com/search?q="), ("peacock", "https://www.peacocktv.com/search?q="),
+            ("max", "https://play.max.com/search?q="), ("crunchyroll", "https://www.crunchyroll.com/search?q="),
+            ("iplayer", "https://www.bbc.co.uk/iplayer/search?q="), ("itvx", "https://www.itv.com/watch/search?q="),
+            ("channel 4", "https://www.channel4.com/search?q="), ("now", "https://www.nowtv.com/search?q="),
+        ]
+        return search.first { name.hasPrefix($0.0) || name.contains(" \($0.0)") || name.contains($0.0 + " ") }.flatMap { URL(string: $0.1 + q) }
+    }
 }
 
 nonisolated struct RegionProviders: Decodable, Sendable {
@@ -201,20 +219,24 @@ nonisolated struct Reel: Hashable {
 }
 
 extension Reel {
-    static let featured = Reel(name: "Trending this week", path: "trending/all/week")
-    static let discover: [Reel] = [
-        Reel(name: "Now in cinemas", path: "movie/now_playing", caption: "On the big screen"),
-        Reel(name: "Bingeable", path: "tv/top_rated", caption: "Clear your weekend"),
-        Reel(name: "Mind benders", path: "discover/movie", query: ["with_genres": "878|9648", "sort_by": "vote_count.desc"], caption: "Sci-fi & mystery"),
-        Reel(name: "Lights off", path: "discover/movie", query: ["with_genres": "27", "sort_by": "popularity.desc"], caption: "Horror"),
-        Reel(name: "Animated worlds", path: "discover/tv", query: ["with_genres": "16", "sort_by": "popularity.desc"], caption: "Animation"),
-        Reel(name: "Laugh track", path: "discover/tv", query: ["with_genres": "35", "sort_by": "popularity.desc"], caption: "Comedy"),
-        Reel(name: "Crime nights", path: "discover/tv", query: ["with_genres": "80", "sort_by": "popularity.desc"], caption: "Crime"),
+    static let featured = Reel(name: "Trending", path: "trending/all/week")
+    /// Search's Browse tiles.
+    static let browse: [Reel] = [
+        Reel(name: "In Cinemas Now", path: "movie/now_playing"),
+        Reel(name: "Coming Soon", path: "movie/upcoming"),
+        Reel(name: "Top TV", path: "tv/top_rated"),
+        Reel(name: "Sci-Fi & Mystery", path: "discover/movie", query: ["with_genres": "878|9648", "sort_by": "vote_count.desc"]),
+        Reel(name: "Horror", path: "discover/movie", query: ["with_genres": "27", "sort_by": "popularity.desc"]),
+        Reel(name: "Comedy", path: "discover/tv", query: ["with_genres": "35", "sort_by": "popularity.desc"]),
+        Reel(name: "Crime", path: "discover/tv", query: ["with_genres": "80", "sort_by": "popularity.desc"]),
+        Reel(name: "Animation", path: "discover/tv", query: ["with_genres": "16", "sort_by": "popularity.desc"]),
+        // TMDB's community keywords for scenes during and after the credits.
+        Reel(name: "After-Credits Scenes", path: "discover/movie", query: ["with_keywords": "179430|179431", "sort_by": "popularity.desc"]),
     ]
 }
 
 enum ImageSize: String {
-    case poster = "w342", posterLarge = "w500", backdrop = "w1280", still = "w300", profile = "w185", logo = "w92"
+    case poster = "w342", posterLarge = "w500", hero = "w780", backdrop = "w1280", still = "w300", profile = "w185", logo = "w92"
 }
 
 enum TMDBError: LocalizedError {
@@ -292,6 +314,24 @@ final class TMDB {
         let c: Collection = try await get("collection/\(id)")
         return c.parts.filter { DateText.isPast($0.date) }.sorted { ($0.date ?? "") < ($1.date ?? "") }
     }
+
+    /// Artwork for the top of a title's page: its logo in English (or with no text), and a poster with no
+    /// text on it so the logo isn't printed twice. Remembered per title.
+    struct Artwork: Sendable { let logo: String?; let poster: String? }
+    func artwork(_ id: Int, _ type: MediaType) async -> Artwork {
+        let key = "\(type.rawValue)/\(id)"
+        if let hit = artworks[key] { return hit }
+        struct Images: Decodable {
+            struct Image: Decodable { let filePath: String; let iso6391: String? }
+            let logos: [Image]; let posters: [Image]
+        }
+        let images: Images? = try? await get("\(key)/images", ["include_image_language": "en,null"])
+        let logo = images?.logos.first { $0.iso6391 == "en" }?.filePath ?? images?.logos.first?.filePath
+        let art = Artwork(logo: logo, poster: images?.posters.first { $0.iso6391 == nil }?.filePath)
+        artworks[key] = art
+        return art
+    }
+    private var artworks: [String: Artwork] = [:]
 
     func regions() async throws -> [Region] {
         let page: Page<Region> = try await get("watch/providers/regions")

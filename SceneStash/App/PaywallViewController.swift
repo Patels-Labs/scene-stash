@@ -1,20 +1,19 @@
-import StoreKit
 import UIKit
 
-/// The All-Access Pass, sold as a foil ticket: tilt it, read the bill, buy it once.
+/// The All-Access Pass: posters, what it adds, and one button.
 final class PaywallViewController: UIViewController {
-    private let ticket = TiltCardView()
+    private let posters = (0..<3).map { _ in ArtView(radius: 10) }
+    private let posterRow = UIStackView()
     private let note = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 0)
-    private let primary = PillButton("Start free trial")
-    private let spinner = UIActivityIndicatorView(style: .medium)
-    private var busy = false { didSet { primary.isEnabled = !busy; busy ? spinner.startAnimating() : spinner.stopAnimating() } }
+    private let primary = CapsuleButton.primary("Start free trial")
+    private var busy = false { didSet { primary.isEnabled = !busy; primary.configuration?.showsActivityIndicator = busy } }
 
-    private static let bill: [(String, String)] = [
-        ("Your year, on film", "A year-end reel of everything you watched, ready to share."),
-        ("Now showing", "A Live Activity with time left and when it ends, plus Tonight on your Home Screen."),
-        ("Marathons", "Plan a whole franchise or season across nights, with breaks."),
-        ("The stub book", "Every film you finish becomes a dated ticket stub, with your rating and a note."),
-        ("Premiere alerts & icons", "A nudge the night a new episode lands, and a box of alternate ticket icons."),
+    private static let benefits: [(String, String, String)] = [
+        ("sparkles", "Year in Review", "A year-end reel of everything you watched, ready to share."),
+        ("play.circle", "Live Activity and Widgets", "A Live Activity with time left and when it ends, plus Tonight on your Home Screen."),
+        ("calendar", "Marathons", "Plan a whole franchise or season across nights, with breaks."),
+        ("clock.arrow.circlepath", "History", "Every film you finish is kept with its date, your rating and a note."),
+        ("bell.badge", "Premiere Alerts and Icons", "A nudge the night a new episode lands, and a set of alternate app icons."),
     ]
 
     init() {
@@ -26,167 +25,124 @@ final class PaywallViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = Theme.bg
-        let glow = CAGradientLayer()
-        glow.type = .radial
-        glow.colors = [Theme.accent.withAlphaComponent(0.4).cgColor, Theme.accent.withAlphaComponent(0).cgColor]
-        glow.startPoint = CGPoint(x: 0.5, y: 0.5)
-        glow.endPoint = CGPoint(x: 1, y: 1)
-        glow.frame = CGRect(x: -120, y: -40, width: 640, height: 560)
-        view.layer.addSublayer(glow)
+
+        let close = CapsuleButton.circle("xmark", label: "Close")
+        close.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .primaryActionTriggered)
+        let restore = Self.plainButton("Restore", Theme.text) { [weak self] in self?.restore() }
+
+        posterRow.spacing = Shelf.gap
+        posterRow.distribution = .fillEqually
+        posters.forEach {
+            posterRow.addArrangedSubview($0)
+            $0.heightAnchor.constraint(equalTo: $0.widthAnchor, multiplier: 1.5).isActive = true
+        }
+        let headline = UILabel.make(Theme.text(.largeTitle, weight: .bold), Theme.text, lines: 0)
+        headline.text = "All-Access Pass"
+        headline.accessibilityTraits = .header
+        let body = UILabel.make(Theme.text(.body), Theme.secondary, lines: 0)
+        body.text = "Tracking stays free. The pass adds the extras, for one small price a year."
+
+        let content = UIStackView(arrangedSubviews: [posterRow, headline, body])
+        content.axis = .vertical
+        content.spacing = 20
+        content.isLayoutMarginsRelativeArrangement = true
+        content.directionalLayoutMargins = .init(top: 8, leading: Shelf.margin, bottom: 24, trailing: Shelf.margin)
+        content.setCustomSpacing(28, after: posterRow)
+        content.setCustomSpacing(8, after: headline)
+        content.setCustomSpacing(28, after: body)
+        Self.benefits.forEach { content.addArrangedSubview(Self.benefit($0.0, $0.1, $0.2)) }
 
         let scroll = UIScrollView()
-        scroll.alwaysBounceVertical = true
-        let content = UIStackView()
-        content.axis = .vertical
-        content.spacing = 14
-        content.isLayoutMarginsRelativeArrangement = true
-        content.directionalLayoutMargins = .init(top: 64, leading: 20, bottom: 260, trailing: 20)
-
-        ticket.imageView.image = Self.ticketImage(price: Pass.shared.price)
-        ticket.cornerRadius = 16
-        ticket.maxAngle = 0.2
-        ticket.foil = true
-        ticket.isAccessibilityElement = true
-        ticket.accessibilityLabel = "All-Access Pass. Admit one, valid all year."
-        let ticketRow = UIStackView(arrangedSubviews: [ticket])
-        ticketRow.axis = .vertical
-        ticketRow.alignment = .center
-        ticket.heightAnchor.constraint(equalTo: ticket.widthAnchor, multiplier: 176 / 330.0).isActive = true
-        ticket.transform = CGAffineTransform(rotationAngle: -0.07)
-
-        let headline = UILabel.make(Theme.display(62, weight: .black), Theme.text, lines: 0)
-        let text = NSMutableAttributedString(string: "ONE TICKET.\n", attributes: [.foregroundColor: Theme.text])
-        text.append(NSAttributedString(string: "EVERY SHOW, ALL YEAR.", attributes: [.foregroundColor: Theme.tertiary]))
-        let style = NSMutableParagraphStyle()
-        style.lineHeightMultiple = 0.86
-        text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
-        headline.attributedText = text
-        headline.accessibilityTraits = .header
-        let body = UILabel.make(Theme.text(.subheadline), Theme.secondary, lines: 0)
-        body.text = "Tracking stays free. The pass adds the extras, for one small price a year."
-        let caption = UILabel.make(Theme.label(.caption2, weight: .bold), Theme.accent)
-        caption.setCaps("On the bill")
-
-        [ticketRow, headline, body, caption].forEach(content.addArrangedSubview)
-        ticket.widthAnchor.constraint(equalTo: content.layoutMarginsGuide.widthAnchor, constant: -10).isActive = true
-        content.setCustomSpacing(40, after: ticketRow)
-        content.setCustomSpacing(30, after: body)
-        content.setCustomSpacing(2, after: caption)
-        for (i, item) in Self.bill.enumerated() { content.addArrangedSubview(Self.line(i + 1, item.0, item.1, last: i == Self.bill.count - 1)) }
-
         scroll.addSubview(content)
-        view.addSubview(scroll)
-        scroll.pin(to: view)
-        content.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            content.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
-            content.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
-            content.leadingAnchor.constraint(equalTo: scroll.frameLayoutGuide.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: scroll.frameLayoutGuide.trailingAnchor),
-        ])
 
-        buildFooter()
-        buildTopBar()
-        NotificationCenter.default.addObserver(self, selector: #selector(update), name: .passChanged, object: nil)
-        update()
-    }
-
-    private static func line(_ n: Int, _ title: String, _ detail: String, last: Bool) -> UIView {
-        let number = UILabel.make(Theme.display(30, weight: .black), Theme.tertiary)
-        number.text = String(format: "%02d", n)
-        number.widthAnchor.constraint(equalToConstant: 38).isActive = true
-        let name = UILabel.make(Theme.display(26, weight: .black), Theme.text, lines: 0)
-        name.text = title.uppercased()
-        let sub = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 0)
-        sub.text = detail
-        let text = UIStackView(arrangedSubviews: [name, sub])
-        text.axis = .vertical
-        text.spacing = 4
-        let row = UIStackView(arrangedSubviews: [number, text])
-        row.alignment = .top
-        row.spacing = 12
-        row.isLayoutMarginsRelativeArrangement = true
-        row.directionalLayoutMargins = .init(top: 14, leading: 0, bottom: 14, trailing: 0)
-        row.isAccessibilityElement = true
-        row.accessibilityLabel = "\(title). \(detail)"
-        if !last {
-            let rule = UIView()
-            rule.backgroundColor = Theme.hairline
-            row.addSubview(rule)
-            rule.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                rule.leadingAnchor.constraint(equalTo: row.leadingAnchor), rule.trailingAnchor.constraint(equalTo: row.trailingAnchor),
-                rule.bottomAnchor.constraint(equalTo: row.bottomAnchor), rule.heightAnchor.constraint(equalToConstant: 1 / UIScreen.main.scale),
-            ])
-        }
-        return row
-    }
-
-    private func buildTopBar() {
-        let close = UIButton(configuration: .glass())
-        close.configuration?.image = UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .bold))
-        close.accessibilityLabel = "Close"
-        close.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .primaryActionTriggered)
-        let restore = UIButton(type: .system)
-        restore.setTitle("RESTORE", for: .normal)
-        restore.titleLabel?.font = Theme.label(.caption2, weight: .bold)
-        restore.tintColor = Theme.secondary
-        restore.addAction(UIAction { [weak self] _ in self?.restore() }, for: .primaryActionTriggered)
-        [close, restore].forEach { view.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
-        NSLayoutConstraint.activate([
-            close.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            close.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            restore.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            restore.centerYAnchor.constraint(equalTo: close.centerYAnchor),
-        ])
-    }
-
-    private func buildFooter() {
-        let fade = CAGradientLayer()
-        fade.colors = [UIColor.black.withAlphaComponent(0).cgColor, UIColor.black.cgColor, UIColor.black.cgColor]
-        fade.locations = [0, 0.2, 1]
-        let footer = CardView()
-        footer.layer.addSublayer(fade)
-        footer.onLayout = { fade.frame = $0 }
         note.textAlignment = .center
+        primary.configurationUpdateHandler = { Spring.press($0, $0.isHighlighted) }
         primary.addAction(UIAction { [weak self] _ in self?.tapPrimary() }, for: .primaryActionTriggered)
-        let links = UIStackView(arrangedSubviews: [("TERMS OF USE", Pass.termsURL), ("PRIVACY POLICY", Pass.privacyURL)].map { title, url in
-            let b = UIButton(type: .system)
-            b.setTitle(title, for: .normal)
-            b.titleLabel?.font = Theme.label(.caption2, weight: .bold)
-            b.tintColor = Theme.tertiary
-            b.addAction(UIAction { _ in UIApplication.shared.open(url) }, for: .primaryActionTriggered)
-            return b
+        let links = UIStackView(arrangedSubviews: [("Terms of Use", Pass.termsURL), ("Privacy Policy", Pass.privacyURL)].map { title, url in
+            Self.plainButton(title, Theme.secondary) { UIApplication.shared.open(url) }
         })
         links.spacing = 24
         let linkRow = UIStackView(arrangedSubviews: [links])
         linkRow.axis = .vertical
         linkRow.alignment = .center
-        let stack = UIStackView(arrangedSubviews: [note, primary, linkRow])
-        stack.axis = .vertical
-        stack.spacing = 10
-        stack.setCustomSpacing(14, after: note)
-        footer.addSubview(stack)
-        footer.addSubview(spinner)
-        view.addSubview(footer)
-        [footer, stack, spinner].forEach { $0.translatesAutoresizingMaskIntoConstraints = false }
+        let footer = UIStackView(arrangedSubviews: [note, primary, linkRow])
+        footer.axis = .vertical
+        footer.spacing = 10
+        footer.setCustomSpacing(14, after: note)
+
+        [close, restore, scroll, footer].forEach { view.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        content.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            footer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            footer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            footer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            stack.topAnchor.constraint(equalTo: footer.topAnchor, constant: 36),
-            stack.leadingAnchor.constraint(equalTo: footer.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: footer.trailingAnchor, constant: -20),
-            stack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -4),
-            spinner.centerXAnchor.constraint(equalTo: footer.centerXAnchor),
-            spinner.bottomAnchor.constraint(equalTo: stack.topAnchor, constant: -4),
+            close.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            close.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            restore.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+            restore.centerYAnchor.constraint(equalTo: close.centerYAnchor),
+            scroll.topAnchor.constraint(equalTo: close.bottomAnchor, constant: 8),
+            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -8),
+            content.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            content.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            content.leadingAnchor.constraint(equalTo: scroll.frameLayoutGuide.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: scroll.frameLayoutGuide.trailingAnchor),
+            footer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Shelf.margin),
+            footer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Shelf.margin),
+            footer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -4),
         ])
+
+        NotificationCenter.default.addObserver(self, selector: #selector(update), name: .passChanged, object: nil)
+        update()
+        loadPosters()
+    }
+
+    /// Your own posters when you have enough, otherwise what's popular.
+    private func loadPosters() {
+        func show(_ titles: [Title]) -> Bool {
+            let art = titles.filter { $0.posterPath != nil }.prefix(posters.count)
+            guard art.count == posters.count else { return false }
+            zip(posters, art).forEach { $0.setImage(TMDB.imageURL($1.posterPath, .poster)) }
+            return true
+        }
+        guard !show(Store.shared.all().map(\.title)) else { return }
+        Task {
+            if !show((try? await TMDB.shared.titles(Reel.featured)) ?? []) { posterRow.isHidden = true }
+        }
+    }
+
+    private static func benefit(_ symbol: String, _ title: String, _ detail: String) -> UIView {
+        let icon = UIImageView(image: UIImage(systemName: symbol))
+        icon.tintColor = Theme.text
+        icon.contentMode = .top
+        icon.preferredSymbolConfiguration = .init(font: Theme.text(.title3))
+        icon.widthAnchor.constraint(equalToConstant: 32).isActive = true
+        let name = UILabel.make(Theme.text(.headline, weight: .semibold), Theme.text, lines: 0)
+        name.text = title
+        let sub = UILabel.make(Theme.text(.subheadline), Theme.secondary, lines: 0)
+        sub.text = detail
+        let text = UIStackView(arrangedSubviews: [name, sub])
+        text.axis = .vertical
+        text.spacing = 2
+        let row = UIStackView(arrangedSubviews: [icon, text])
+        row.alignment = .top
+        row.spacing = 12
+        row.isAccessibilityElement = true
+        row.accessibilityLabel = "\(title). \(detail)"
+        return row
+    }
+
+    private static func plainButton(_ title: String, _ color: UIColor, _ action: @escaping () -> Void) -> UIButton {
+        var config = UIButton.Configuration.plain()
+        config.title = title
+        config.baseForegroundColor = color
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { a in
+            var a = a; a.font = Theme.text(.subheadline); return a
+        }
+        return UIButton(configuration: config, primaryAction: UIAction { _ in action() })
     }
 
     /// What the button says depends on where you are: new (trial on offer), lapsed, mid-trial, or subscribed.
     @objc private func update() {
         let pass = Pass.shared
-        ticket.imageView.image = Self.ticketImage(price: pass.price)
         let ends = pass.periodEnds?.formatted(.dateTime.day().month(.wide).year())
         if pass.subscribed {
             if pass.inTrial, let ends {
@@ -232,47 +188,14 @@ final class PaywallViewController: UIViewController {
         }
     }
 
-    /// The ticket flashes its foil and the screen closes.
     private func celebrate() {
         Haptics.success()
-        ticket.revealFoil()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in self?.dismiss(animated: true) }
+        dismiss(animated: true)
     }
 
     private func showMessage(_ text: String) {
         let alert = UIAlertController(title: nil, message: text, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "OK", style: .default))
         present(alert, animated: true)
-    }
-
-    /// The pass itself, printed: amber stock, "All-Access" in the display face, a perforated $1.99 stub.
-    static func ticketImage(price: String) -> UIImage {
-        let size = CGSize(width: 660, height: 352)
-        return UIGraphicsImageRenderer(size: size).image { ctx in
-            let cg = ctx.cgContext
-            let stubX: CGFloat = 492
-            let colors = [UIColor(red: 1, green: 0.82, blue: 0.48, alpha: 1), Theme.accent, UIColor(red: 0.89, green: 0.6, blue: 0.17, alpha: 1)].map(\.cgColor)
-            let gradient = CGGradient(colorsSpace: nil, colors: colors as CFArray, locations: [0, 0.5, 1])!
-            cg.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: size.width, y: size.height), options: [])
-            UIColor(white: 0, alpha: 0.45).setFill()
-            for y in stride(from: CGFloat(18), to: size.height - 10, by: 18) {
-                UIBezierPath(ovalIn: CGRect(x: stubX - 3, y: y, width: 6, height: 6)).fill()
-            }
-            func draw(_ text: String, _ font: UIFont, at point: CGPoint, kern: CGFloat = 0, alpha: CGFloat = 1, centeredIn width: CGFloat? = nil) {
-                let s = NSAttributedString(string: text, attributes: [.font: font, .kern: kern, .foregroundColor: UIColor(white: 0, alpha: alpha)])
-                let x = width.map { point.x + ($0 - s.size().width) / 2 } ?? point.x
-                s.draw(at: CGPoint(x: x, y: point.y))
-            }
-            let small = UIFont.systemFont(ofSize: 17, weight: .bold, width: .expanded)
-            draw("SCENE STASH", small, at: CGPoint(x: 36, y: 32), kern: 3)
-            draw("NO. 000417", small, at: CGPoint(x: 330, y: 32), kern: 3)
-            draw("ADMIT ONE", small, at: CGPoint(x: 36, y: 168), kern: 3, alpha: 0.65)
-            draw("ALL-ACCESS", .systemFont(ofSize: 104, weight: .black, width: .compressed), at: CGPoint(x: 32, y: 182))
-            draw("VALID ALL YEAR · EVERY SCREEN", small, at: CGPoint(x: 36, y: 300), kern: 3)
-            let stubW = size.width - stubX
-            draw("PER YEAR", small, at: CGPoint(x: stubX, y: 110), kern: 3, centeredIn: stubW)
-            draw(price, .systemFont(ofSize: 72, weight: .black, width: .compressed), at: CGPoint(x: stubX, y: 136), centeredIn: stubW)
-            draw("PASS", small, at: CGPoint(x: stubX, y: 226), kern: 3, centeredIn: stubW)
-        }
     }
 }
