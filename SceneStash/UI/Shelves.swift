@@ -301,6 +301,8 @@ final class CircleLockup: UICollectionViewCell {
         captions.set(name, detail)
         accessibilityLabel = [name, detail].compactMap { $0 }.joined(separator: ", ")
     }
+
+    override var isHighlighted: Bool { didSet { Spring.press(self, isHighlighted) } }
 }
 
 /// A small frosted label, for a status on top of artwork.
@@ -396,6 +398,8 @@ final class HeroView: UIView {
         art.contentMode = .scaleAspectFill
         art.clipsToBounds = true
         art.backgroundColor = Theme.surface
+        // An image view asks to be as tall as its image; left alone that beats the 2:3 hug below.
+        art.setContentCompressionResistancePriority(.fittingSizeLevel, for: .vertical)
         // Stops short of black: the art ends on a clean edge rather than dissolving into the page.
         shade.colors = [UIColor(white: 0, alpha: 0.35), .clear, .clear, UIColor(white: 0, alpha: 0.72), UIColor(white: 0, alpha: 0.9)].map(\.cgColor)
         shade.locations = [0, 0.18, 0.38, 0.72, 1]
