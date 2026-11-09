@@ -1,29 +1,28 @@
-import CoreData
 import CloudKit
+import CoreData
 import UIKit
 
-/// One night out as a group ticket: where it's moved to, the cinema and seats, who's going,
-/// and once the credits roll, one line each for the scrapbook.
+/// One night out, Apple TV-style: the film's art and logo with Directions and Invite Friends, then where the
+/// evening's got to, your ticket, who's going, and once it's finished, everyone's reactions.
 final class NightViewController: UIViewController, UICloudSharingControllerDelegate {
     private let night: MovieNight
     private var clock: Timer?
     private var creatingShare = false
 
-    private let glow = GlowView()
-    private let poster = UIImageView()
-    private let kicker = UILabel.make(Theme.label(), Theme.accent)
-    private let when = UILabel.make(Theme.label(), Theme.secondary)
-    private let titleLabel = UILabel.make(Theme.display(64, weight: .black), Theme.text, lines: 0)
-    private let track = UIStackView()
+    private let hero = HeroView()
+    private let primary = CapsuleButton.primary("Directions", image: "location.fill")
+    private let invite = CapsuleButton.glass("Invite Friends", image: "person.badge.plus")
+    private let booked = CapsuleButton.circle("ticket", label: "Mark as Booked")
+    private let steps = UIStackView()
     private let ticket = TicketCard()
-    private let bookIt = PillButton("We've got tickets", image: "ticket")
-    private let guests = UIStackView()
-    private let invite = PillButton("Invite in Messages", image: "person.badge.plus", inverted: true)
-    private let runsItself = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 0)
-    private let scrapbook = UIStackView()
+    private let people = UIStackView()
+    private let after = UIView()
+    private let afterDetail = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 0)
+    private var afterSection: UIView!
+    private let reactions = UIStackView()
     private let notes = UIStackView()
     private let myLine = UITextField()
-    private let myRating = ReelRatingView()
+    private let myRating = RatingRow(inset: 0)
 
     init(night: MovieNight) {
         self.night = night
@@ -39,50 +38,44 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
             done(self?.menuItems() ?? [])
         }]))
 
-        view.addSubview(glow)
-        glow.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            glow.topAnchor.constraint(equalTo: view.topAnchor), glow.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            glow.trailingAnchor.constraint(equalTo: view.trailingAnchor), glow.heightAnchor.constraint(equalToConstant: 560),
-        ])
-        glow.show(TMDB.imageURL(night.posterPath, .poster))
+        buildHero()
+        buildSteps()
+        buildAfter()
+        buildReactions()
+        afterSection = section("After the Film", after)
 
-        let stack = UIStackView(arrangedSubviews: [header(), titleLabel, track, ticket, bookIt, section("Who's going", guests), invite, note(runsItself, caption: "Runs itself"), scrapbook])
-        stack.axis = .vertical
-        stack.spacing = 18
-        stack.setCustomSpacing(26, after: titleLabel)
-        stack.setCustomSpacing(30, after: bookIt)
-        stack.setCustomSpacing(30, after: invite)
-        stack.setCustomSpacing(30, after: stack.arrangedSubviews[7])
         let scroll = UIScrollView()
         scroll.keyboardDismissMode = .interactive
+        scroll.contentInsetAdjustmentBehavior = .never
+        scroll.contentInset.bottom = 100
         view.addSubview(scroll)
+        // The page ends at the keyboard, so Reactions can scroll up above it while you type.
         scroll.translatesAutoresizingMaskIntoConstraints = false
+        view.keyboardLayoutGuide.usesBottomSafeArea = false
         NSLayoutConstraint.activate([
-            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor), scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: view.topAnchor),
+            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
         ])
-        scroll.addSubview(stack)
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        NotificationCenter.default.addObserver(forName: UIResponder.keyboardDidShowNotification, object: nil, queue: .main) { [weak self, weak scroll] _ in
+            MainActor.assumeIsolated {
+                guard let self, let scroll, self.myLine.isFirstResponder else { return }
+                scroll.scrollRectToVisible(self.myLine.convert(self.myLine.bounds.insetBy(dx: 0, dy: -24), to: scroll), animated: true)
+            }
+        }
+        let page = UIStackView(arrangedSubviews: [hero, padded(steps), section("Your Ticket", ticket), section("Who's Going", peopleRow(), inset: false),
+                                                  afterSection, reactions])
+        page.axis = .vertical
+        page.spacing = 28
+        scroll.addSubview(page)
+        page.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 12),
-            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -48),
-            stack.leadingAnchor.constraint(equalTo: scroll.frameLayoutGuide.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: scroll.frameLayoutGuide.trailingAnchor, constant: -20),
+            page.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            page.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -24),
+            page.leadingAnchor.constraint(equalTo: scroll.frameLayoutGuide.leadingAnchor),
+            page.trailingAnchor.constraint(equalTo: scroll.frameLayoutGuide.trailingAnchor),
         ])
-
-        titleLabel.accessibilityTraits = .header
-        titleLabel.adjustsFontSizeToFitWidth = true
-        titleLabel.minimumScaleFactor = 0.6
-        track.distribution = .fillEqually
-        track.spacing = 6
-        track.alignment = .top
-        guests.axis = .vertical
-        notes.axis = .vertical
-        ticket.onDirections = { [weak self] in self?.directions() }
-        bookIt.addAction(UIAction { [weak self] _ in self?.markBooked() }, for: .primaryActionTriggered)
-        invite.addAction(UIAction { [weak self] action in self?.inviteFriends(from: action.sender as? UIView) }, for: .primaryActionTriggered)
-        buildScrapbook()
 
         render()
         NotificationCenter.default.addObserver(self, selector: #selector(storeChanged), name: .NSManagedObjectContextObjectsDidChange, object: Store.shared.context)
@@ -111,68 +104,133 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
 
     // MARK: Building
 
-    private func header() -> UIView {
-        poster.contentMode = .scaleAspectFill
-        poster.clipsToBounds = true
-        poster.layer.cornerRadius = 12
-        poster.backgroundColor = Theme.surface
-        poster.transform = CGAffineTransform(rotationAngle: -0.05)
-        poster.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([poster.widthAnchor.constraint(equalToConstant: 110), poster.heightAnchor.constraint(equalToConstant: 165)])
-        poster.setImage(TMDB.imageURL(night.posterPath, .poster))
-        let labels = UIStackView(arrangedSubviews: [kicker, when])
-        labels.axis = .vertical
-        labels.spacing = 8
-        let row = UIStackView(arrangedSubviews: [poster, labels])
-        row.spacing = 16
-        row.alignment = .bottom
+    private func padded(_ view: UIView) -> UIView {
+        let box = UIView()
+        box.addSubview(view)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: box.topAnchor),
+            view.bottomAnchor.constraint(equalTo: box.bottomAnchor),
+            view.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: Shelf.margin),
+            view.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -Shelf.margin),
+        ])
+        return box
+    }
+
+    private func section(_ title: String, _ body: UIView, inset: Bool = true) -> UIView {
+        let label = UILabel.make(Theme.text(.title2, weight: .semibold))
+        label.text = title
+        label.accessibilityTraits = .header
+        let stack = UIStackView(arrangedSubviews: [padded(label), inset ? padded(body) : body])
+        stack.axis = .vertical
+        stack.spacing = 12
+        return stack
+    }
+
+    private func buildHero() {
+        hero.show(night.title, meta: nil)
+        primary.widthAnchor.constraint(equalToConstant: 255).isActive = true
+        invite.widthAnchor.constraint(greaterThanOrEqualToConstant: 200).isActive = true
+        let row = UIStackView(arrangedSubviews: [invite, booked])
+        row.spacing = 10
+        row.alignment = .center
+        [primary, row].forEach(hero.content.addArrangedSubview)
+        hero.content.setCustomSpacing(10, after: primary)
+        primary.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            night.cinema == nil ? edit() : directions()
+        }, for: .primaryActionTriggered)
+        invite.addAction(UIAction { [weak self] action in self?.inviteFriends(from: action.sender as? UIView) }, for: .primaryActionTriggered)
+        booked.addAction(UIAction { [weak self] _ in self?.toggleBooked() }, for: .primaryActionTriggered)
+    }
+
+    private func buildSteps() {
+        Card.style(steps)
+        steps.distribution = .fillEqually
+        steps.alignment = .top
+        steps.spacing = 6
+        steps.isLayoutMarginsRelativeArrangement = true
+        steps.directionalLayoutMargins = .init(top: 16, leading: 16, bottom: 16, trailing: 16)
+    }
+
+    private func peopleRow() -> UIView {
+        let scroll = UIScrollView()
+        scroll.showsHorizontalScrollIndicator = false
+        scroll.contentInset = .init(top: 0, left: Shelf.margin, bottom: 0, right: Shelf.margin)
+        people.spacing = Shelf.gap
+        people.alignment = .top
+        scroll.addSubview(people)
+        people.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            people.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            people.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            people.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            people.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            people.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor),
+            scroll.heightAnchor.constraint(equalToConstant: Shelf.poster.width + 52),
+        ])
+        return scroll
+    }
+
+    private func buildAfter() {
+        Card.style(after)
+        let library = Self.fact(symbol: "checkmark", tint: Theme.accent, title: "Added to everyone's library", detail: afterDetail)
+        let react = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 0)
+        react.text = "One line and a rating each, the same rating as the film's page. Kept in Past Nights."
+        let reactions = Self.fact(symbol: "text.bubble", tint: UIColor(red: 0.56, green: 0.83, blue: 0.86, alpha: 1), title: "Reactions", detail: react)
+        let rule = UIView()
+        rule.backgroundColor = Card.rule
+        rule.heightAnchor.constraint(equalToConstant: 0.5).isActive = true
+        let stack = UIStackView(arrangedSubviews: [library, rule, reactions])
+        stack.axis = .vertical
+        after.addSubview(stack)
+        stack.pin(to: after)
+    }
+
+    private static func fact(symbol: String, tint: UIColor, title: String, detail: UILabel) -> UIView {
+        let icon = UIImageView(image: UIImage(systemName: symbol))
+        icon.tintColor = tint
+        icon.contentMode = .center
+        icon.backgroundColor = tint.withAlphaComponent(0.18)
+        icon.layer.cornerRadius = 8
+        icon.preferredSymbolConfiguration = .init(pointSize: 14, weight: .semibold)
+        icon.widthAnchor.constraint(equalToConstant: 32).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        let t = UILabel.make(Theme.text(.body), Theme.text, lines: 0)
+        t.text = title
+        let text = UIStackView(arrangedSubviews: [t, detail])
+        text.axis = .vertical
+        text.spacing = 2
+        let row = UIStackView(arrangedSubviews: [icon, text])
+        row.spacing = 14
+        row.alignment = .center
+        row.isLayoutMarginsRelativeArrangement = true
+        row.directionalLayoutMargins = .init(top: 14, leading: 16, bottom: 14, trailing: 16)
         return row
     }
 
-    private func section(_ title: String, _ body: UIView) -> UIView {
-        let label = UILabel.make(Theme.label(), Theme.tertiary)
-        label.setCaps(title)
-        let stack = UIStackView(arrangedSubviews: [label, body])
-        stack.axis = .vertical
-        stack.spacing = 6
-        return stack
-    }
-
-    private func note(_ body: UILabel, caption: String) -> UIView {
-        let label = UILabel.make(Theme.label(.caption2, weight: .bold), Theme.accent)
-        label.setCaps(caption)
-        let stack = UIStackView(arrangedSubviews: [label, body])
-        stack.axis = .vertical
-        stack.spacing = 6
-        stack.isLayoutMarginsRelativeArrangement = true
-        stack.directionalLayoutMargins = .init(top: 14, leading: 16, bottom: 14, trailing: 16)
-        stack.backgroundColor = Theme.accent.withAlphaComponent(0.1)
-        stack.layer.cornerRadius = 16
-        stack.layer.borderWidth = 1
-        stack.layer.borderColor = Theme.accent.withAlphaComponent(0.4).cgColor
-        return stack
-    }
-
-    private func buildScrapbook() {
-        myLine.attributedPlaceholder = NSAttributedString(string: "Your one line. Say it once, say it well.", attributes: [.foregroundColor: Theme.tertiary])
-        myLine.font = Self.handwriting
+    private func buildReactions() {
+        myLine.attributedPlaceholder = NSAttributedString(string: "Your one line", attributes: [.foregroundColor: Theme.tertiary])
+        myLine.font = Theme.text(.body)
         myLine.textColor = Theme.text
-        myLine.backgroundColor = Theme.surface
-        myLine.layer.cornerRadius = 12
-        myLine.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 14, height: 1))
+        Card.style(myLine)
+        myLine.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 16, height: 1))
         myLine.leftViewMode = .always
         myLine.returnKeyType = .done
-        myLine.accessibilityLabel = "Your line"
+        myLine.accessibilityLabel = "Your reaction"
         myLine.heightAnchor.constraint(greaterThanOrEqualToConstant: 50).isActive = true
         myLine.addAction(UIAction { [weak self] _ in self?.saveMyLine(); self?.myLine.resignFirstResponder() }, for: .editingDidEndOnExit)
         myLine.addAction(UIAction { [weak self] _ in self?.saveMyLine() }, for: .editingDidEnd)
         myRating.onChange = { [weak self] _ in self?.saveMyLine() }
-        let rateLabel = UILabel.make(Theme.label(), Theme.tertiary)
-        rateLabel.setCaps("Your rating")
-        [section("One line each", notes), myLine, rateLabel, myRating].forEach(scrapbook.addArrangedSubview)
-        scrapbook.axis = .vertical
-        scrapbook.spacing = 12
-        scrapbook.setCustomSpacing(18, after: myLine)
+        notes.axis = .vertical
+        Card.style(notes)
+        let yours = UILabel.make(Theme.text(.headline))
+        yours.text = "Yours"
+        let body = UIStackView(arrangedSubviews: [notes, yours, myLine, myRating])
+        body.axis = .vertical
+        body.spacing = 12
+        body.setCustomSpacing(24, after: notes)
+        reactions.addArrangedSubview(section("Reactions", body))
     }
 
     // MARK: Rendering
@@ -185,80 +243,78 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
         }
         let showtime = night.showtime ?? .now
         let crew = Store.shared.guests(for: night)
-        kicker.setCaps(crew.count > 1 ? "Night out · \(crew.count) going" : "Night out")
-        when.setCaps(showtime.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)) + " · " + showtime.formatted(date: .omitted, time: .shortened))
-        titleLabel.setDisplay(night.name?.uppercased(), lineHeight: 0.84)
+        let day = showtime.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+        hero.meta.text = "Movie Night · \(day)" + (crew.count > 1 ? " · \(crew.count) going" : "")
+        hero.meta.isHidden = false
 
-        track.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for step in NightStatus.allCases {
-            track.addArrangedSubview(StepView(step, sub: stepNote(step), state: step.rawValue < stage.rawValue ? .done : step == stage ? .now : .todo))
-        }
-
-        ticket.configure(night, admit: crew.count)
-        bookIt.isHidden = stage != .noTickets
-
-        guests.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for (i, guest) in crew.enumerated() {
-            let note = guest.planned ? "Planned it" : guest.accepted ? nil : "Invited"
-            guests.addArrangedSubview(PersonRow(Avatar(guest.initial, index: i, size: 34), name: guest.name, trailing: note))
-        }
+        primary.configuration?.title = night.cinema == nil ? "Add a Cinema" : "Directions"
+        primary.configuration?.image = UIImage(systemName: night.cinema == nil ? "plus" : "location.fill")
+        primary.isHidden = stage == .creditsRolled
         invite.isHidden = stage == .creditsRolled || night.isGuest
+        booked.isHidden = stage != .noTickets && stage != .ticketsInHand
+        booked.configuration?.image = UIImage(systemName: night.booked ? "ticket.fill" : "ticket")
+        booked.configuration?.baseForegroundColor = night.booked ? Theme.accent : .white
+        booked.accessibilityLabel = night.booked ? "Booked. Double tap to mark as not booked" : "Mark as Booked"
 
+        steps.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for step in NightStatus.allCases {
+            steps.addArrangedSubview(StepView(step, sub: stepNote(step), state: step.rawValue < stage.rawValue ? .done : step == stage ? .now : .todo))
+        }
+
+        ticket.configure(night)
+
+        people.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for (i, guest) in crew.enumerated() {
+            let role = guest.planned ? "Planned it" : guest.accepted ? "Going" : "Invited"
+            people.addArrangedSubview(PersonView(initial: guest.initial, color: Avatar.colors[i % Avatar.colors.count], name: guest.name, detail: role))
+        }
+
+        afterSection.isHidden = stage == .creditsRolled
         let lightsUp = night.lightsUp.map { $0.formatted(date: .omitted, time: .shortened) } ?? "the end"
-        runsItself.text = stage == .creditsRolled
-            ? "The film's in your stash as seen. Add your line for the scrapbook below."
-            : "Turns to Lights down at \(showtime.formatted(date: .omitted, time: .shortened)) and Credits rolled around \(lightsUp). The film then goes into everyone's stash as seen."
+        afterDetail.text = "Watching at \(showtime.formatted(date: .omitted, time: .shortened)), Watched at about \(lightsUp)"
 
-        scrapbook.isHidden = stage != .creditsRolled
+        reactions.isHidden = stage != .creditsRolled
         if stage == .creditsRolled { renderNotes() }
     }
 
     private func stepNote(_ step: NightStatus) -> String {
         let time: (Date?) -> String = { $0?.formatted(date: .omitted, time: .shortened) ?? "" }
         switch step {
-        case .noTickets: return "Planned " + (night.createdAt ?? .now).formatted(.dateTime.day().month(.abbreviated))
-        case .ticketsInHand: return night.booked ? (night.bookedBy.map { "\($0) booked" } ?? "Booked") : "Not yet"
-        case .lightsDown: return "Auto · " + time(night.showtime)
-        case .creditsRolled: return "Auto · ~" + time(night.lightsUp)
+        case .noTickets: return (night.createdAt ?? .now).formatted(.dateTime.day().month(.abbreviated))
+        case .ticketsInHand: return night.booked ? (night.bookedBy ?? "Yes") : "Not yet"
+        case .lightsDown: return time(night.showtime)
+        case .creditsRolled: return "~" + time(night.lightsUp)
         }
     }
 
     private func renderNotes() {
         notes.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        let all = (night.notes ?? []).filter { $0.text != nil || $0.rating > 0 }.sorted { ($0.createdAt ?? .now) < ($1.createdAt ?? .now) }
+        let all = (night.notes ?? []).filter { $0.authorID != Prefs.me && ($0.text != nil || $0.rating > 0) }
+            .sorted { ($0.createdAt ?? .now) < ($1.createdAt ?? .now) }
         for (i, n) in all.enumerated() {
-            let mine = n.authorID == Prefs.me
-            let name = mine ? "You" : n.authorName ?? "A friend"
-            let row = PersonRow(Avatar(String(name.prefix(1)), index: i, size: 30), name: n.text ?? "No words, just a rating",
-                                trailing: n.rating > 0 ? "\(n.rating)" : nil, caption: name)
-            row.name.font = Self.handwriting
-            row.name.numberOfLines = 0
-            notes.addArrangedSubview(row)
+            notes.addArrangedSubview(ReactionRow(initial: String((n.authorName ?? "A").prefix(1)), color: Avatar.colors[(i + 1) % Avatar.colors.count],
+                                                 line: n.text, name: n.authorName ?? "A friend", rating: Int(n.rating), divider: i > 0))
         }
+        notes.isLayoutMarginsRelativeArrangement = all.isEmpty
         if all.isEmpty {
-            let empty = UILabel.make(Theme.text(.subheadline), Theme.tertiary, lines: 0)
-            empty.text = "Nobody's written theirs yet. Go first."
+            let empty = UILabel.make(Theme.text(.subheadline), Theme.secondary, lines: 0)
+            empty.text = "No reactions from friends yet."
             notes.addArrangedSubview(empty)
+            notes.directionalLayoutMargins = .init(top: 14, leading: 16, bottom: 14, trailing: 16)
         }
         // Yours is the film's rating and line, wherever you set them.
         let film = Store.shared.tracked(night.title.id, .movie)
         let mine = Store.shared.myNote(on: night)
         let line = mine?.text ?? film?.note, rating = Int(mine?.rating ?? film?.rating ?? 0)
         if !myLine.isFirstResponder { myLine.text = line }
-        if !myRating.isInteracting, myRating.value != rating { myRating.set(rating, animated: false) }
+        if myRating.value != rating { myRating.set(rating) }
     }
-
-    private static let handwriting: UIFont = {
-        let base = UIFont.systemFont(ofSize: 20, weight: .medium)
-        let font = base.fontDescriptor.withDesign(.serif)?.withSymbolicTraits(.traitItalic).map { UIFont(descriptor: $0, size: 20) } ?? base
-        return UIFontMetrics(forTextStyle: .body).scaledFont(for: font)
-    }()
 
     // MARK: Actions
 
-    private func markBooked() {
-        night.booked = true
-        night.bookedBy = Store.shared.myName(on: night)
+    private func toggleBooked() {
+        night.booked.toggle()
+        night.bookedBy = night.booked ? Store.shared.myName(on: night) : nil
         Store.shared.save()
         Haptics.success()
     }
@@ -282,19 +338,19 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
     }
 
     private func menuItems() -> [UIMenuElement] {
-        var items: [UIMenuElement] = [UIAction(title: "Edit details", image: UIImage(systemName: "pencil")) { [weak self] _ in self?.edit() }]
+        var items: [UIMenuElement] = [UIAction(title: "Edit Details", image: UIImage(systemName: "pencil")) { [weak self] _ in self?.edit() }]
         if Store.shared.share(for: night) != nil {
-            items.append(UIAction(title: night.isGuest ? "People and leaving" : "Manage people", image: UIImage(systemName: "person.2")) { [weak self] _ in self?.managePeople() })
+            items.append(UIAction(title: night.isGuest ? "People and Leaving" : "Manage People", image: UIImage(systemName: "person.2")) { [weak self] _ in self?.managePeople() })
         }
         if !night.isGuest {
-            items.append(UIAction(title: "Delete night", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in self?.confirmDelete() })
+            items.append(UIAction(title: "Delete Night", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in self?.confirmDelete() })
         }
         return items
     }
 
     private func confirmDelete() {
         let alert = UIAlertController(title: "Delete this night?", message: "It's removed for everyone you invited too.", preferredStyle: .actionSheet)
-        alert.addAction(UIAlertAction(title: "Delete night", style: .destructive) { [weak self] _ in
+        alert.addAction(UIAlertAction(title: "Delete Night", style: .destructive) { [weak self] _ in
             guard let self else { return }
             Store.shared.delete(night)
             navigationController?.popViewController(animated: true)
@@ -364,143 +420,160 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
     func cloudSharingControllerDidStopSharing(_ csc: UICloudSharingController) { render() }
 }
 
-/// One step of the night: a bar that fills as the evening moves on, with its name and when.
+/// One stage of the night: a bar that fills as the evening moves on, with its name and when.
 private final class StepView: UIStackView {
     enum State { case done, now, todo }
 
     init(_ step: NightStatus, sub: String, state: State) {
         super.init(frame: .zero)
         let bar = UIView()
-        bar.layer.cornerRadius = 3
-        bar.backgroundColor = state == .todo ? UIColor(white: 1, alpha: 0.14) : Theme.accent.withAlphaComponent(state == .now ? 1 : 0.55)
-        bar.heightAnchor.constraint(equalToConstant: 6).isActive = true
-        let name = UILabel.make(Theme.label(.caption2, weight: .bold), state == .now ? Theme.accent : state == .done ? Theme.text : Theme.tertiary, lines: 0)
-        name.setCaps(step.label, kern: 1)
-        let when = UILabel.make(Theme.text(.caption2), Theme.tertiary, lines: 0)
+        bar.layer.cornerRadius = 2
+        bar.backgroundColor = state == .todo ? UIColor(white: 0.47, alpha: 0.36) : Theme.accent.withAlphaComponent(state == .now ? 1 : 0.5)
+        bar.heightAnchor.constraint(equalToConstant: 4).isActive = true
+        let name = UILabel.make(Theme.text(.footnote, weight: .semibold), state == .now ? Theme.accent : state == .done ? Theme.text : Theme.secondary, lines: 0)
+        name.text = step.label
+        let when = UILabel.make(Theme.text(.caption1), Theme.secondary, lines: 0)
         when.text = sub
         [bar, name, when].forEach(addArrangedSubview)
         axis = .vertical
-        spacing = 7
+        spacing = 6
+        setCustomSpacing(8, after: bar)
         isAccessibilityElement = true
         accessibilityLabel = "\(step.label), \(sub)" + (state == .now ? ", now" : "")
     }
     required init(coder: NSCoder) { fatalError() }
 }
 
-/// A person on a line: initial, name, and something on the right.
-private final class PersonRow: UIStackView {
-    let name = UILabel.make(Theme.text(.body, weight: .semibold))
+/// Lays a view out inside a box's layout margins.
+private func margined(_ view: UIView, _ margins: NSDirectionalEdgeInsets) -> UIView {
+    let box = UIView()
+    box.directionalLayoutMargins = margins
+    box.addSubview(view)
+    view.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+        view.topAnchor.constraint(equalTo: box.layoutMarginsGuide.topAnchor),
+        view.bottomAnchor.constraint(equalTo: box.layoutMarginsGuide.bottomAnchor),
+        view.leadingAnchor.constraint(equalTo: box.layoutMarginsGuide.leadingAnchor),
+        view.trailingAnchor.constraint(equalTo: box.layoutMarginsGuide.trailingAnchor),
+    ])
+    return box
+}
 
-    init(_ avatar: Avatar, name text: String, trailing: String?, caption: String? = nil) {
+/// The ticket: the cinema, then screen, seats and showtime, and when the film really starts.
+private final class TicketCard: UIView {
+    private let cinema = UILabel.make(Theme.text(.body), Theme.text, lines: 0)
+    private let address = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 0)
+    private let screen = UILabel.make(Theme.text(.title1, weight: .bold))
+    private let seats = UILabel.make(Theme.text(.title1, weight: .bold))
+    private let time = UILabel.make(Theme.text(.title1, weight: .bold))
+    private let footnote = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 0)
+    private static let cellMargins = NSDirectionalEdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        Card.style(self)
+        seats.adjustsFontSizeToFitWidth = true
+        seats.minimumScaleFactor = 0.5
+        let grid = UIStackView(arrangedSubviews: [Self.block("Screen", [screen]), Self.block("Seats", [seats]), Self.block("Showtime", [time])])
+        grid.distribution = .fillEqually
+        let stack = UIStackView(arrangedSubviews: [Self.block("Cinema", [cinema, address]), Self.rule(), grid, Self.rule(), margined(footnote, Self.cellMargins)])
+        stack.axis = .vertical
+        addSubview(stack)
+        stack.pin(to: self)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    private static func block(_ caption: String, _ values: [UILabel]) -> UIView {
+        let label = UILabel.make(Theme.text(.footnote), Theme.secondary)
+        label.text = caption
+        let stack = UIStackView(arrangedSubviews: [label] + values)
+        stack.axis = .vertical
+        stack.spacing = 2
+        return margined(stack, cellMargins)
+    }
+
+    private static func rule() -> UIView {
+        let r = UIView()
+        r.backgroundColor = Card.rule
+        r.heightAnchor.constraint(equalToConstant: 0.5).isActive = true
+        return r
+    }
+
+    func configure(_ night: MovieNight) {
+        cinema.text = night.cinema ?? "No cinema yet"
+        address.text = night.address
+        address.isHidden = night.address == nil
+        screen.text = night.screen ?? "–"
+        seats.text = night.seats ?? "–"
+        let showtime = night.showtime ?? .now
+        time.text = showtime.formatted(date: .omitted, time: .shortened)
+        let starts = NightStatus.filmStarts(showtime).formatted(date: .omitted, time: .shortened)
+        footnote.text = "Film starts about \(starts) after ads and trailers" + (night.lightsUp.map { " · out by \($0.formatted(date: .omitted, time: .shortened))" } ?? "")
+    }
+}
+
+/// A friend on the night: a coloured circle with their initial, their name, and how they're involved.
+private final class PersonView: UIStackView {
+    init(initial: String, color: UIColor, name: String, detail: String) {
         super.init(frame: .zero)
-        name.text = text
-        let names = UIStackView(arrangedSubviews: [name])
-        names.axis = .vertical
-        names.spacing = 2
-        if let caption {
-            let c = UILabel.make(Theme.text(.caption1), Theme.tertiary)
-            c.text = caption
-            names.addArrangedSubview(c)
-        }
-        // A rating reads as a big number; anything else as a small tag.
-        let isNumber = trailing.flatMap(Int.init) != nil
-        let right = UILabel.make(isNumber ? Theme.display(28, weight: .black) : Theme.label(.caption2, weight: .bold), isNumber ? Theme.accent : Theme.tertiary)
-        if isNumber { right.text = trailing } else { right.setCaps(trailing) }
-        right.setContentHuggingPriority(.required, for: .horizontal)
-        [avatar, names, right].forEach(addArrangedSubview)
-        spacing = 12
-        alignment = .center
-        isLayoutMarginsRelativeArrangement = true
-        directionalLayoutMargins = .init(top: 10, leading: 0, bottom: 10, trailing: 0)
+        let circle = UILabel.make(Theme.text(.largeTitle, weight: .bold), .black)
+        circle.text = initial
+        circle.textAlignment = .center
+        circle.backgroundColor = color
+        circle.layer.cornerRadius = Shelf.poster.width / 2
+        circle.clipsToBounds = true
+        circle.widthAnchor.constraint(equalToConstant: Shelf.poster.width).isActive = true
+        circle.heightAnchor.constraint(equalToConstant: Shelf.poster.width).isActive = true
+        let n = UILabel.make(Theme.text(.footnote))
+        n.text = name
+        n.textAlignment = .center
+        let d = UILabel.make(Theme.text(.caption1), Theme.secondary)
+        d.text = detail
+        d.textAlignment = .center
+        [circle, n, d].forEach(addArrangedSubview)
+        axis = .vertical
+        spacing = 2
+        setCustomSpacing(8, after: circle)
         isAccessibilityElement = true
-        accessibilityLabel = [caption, text, trailing].compactMap { $0 }.joined(separator: ", ")
+        accessibilityLabel = "\(name), \(detail)"
     }
     required init(coder: NSCoder) { fatalError() }
 }
 
-/// The printed ticket: cinema and address with directions, then screen, seats and doors under a perforation.
-private final class TicketCard: UIView {
-    var onDirections: (() -> Void)?
-    private let admit = UILabel.make(Theme.label(.caption2, weight: .bold), UIColor(red: 0.54, green: 0.35, blue: 0.08, alpha: 1))
-    private let cinema = UILabel.make(Theme.display(30, weight: .black), .black, lines: 0)
-    private let address = UILabel.make(Theme.text(.footnote), UIColor(white: 0.33, alpha: 1), lines: 0)
-    private let directions = UIButton(configuration: .filled())
-    private let screen = UILabel.make(Theme.display(40, weight: .black), .black)
-    private let seats = UILabel.make(Theme.display(40, weight: .black), .black)
-    private let doors = UILabel.make(Theme.display(40, weight: .black), .black)
-    private let footnote = UILabel.make(Theme.text(.caption1), UIColor(white: 0.33, alpha: 1), lines: 0)
-    private let perforation = TicketShape.perforation()
-    private let lower = UIStackView()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        backgroundColor = UIColor(red: 0.957, green: 0.937, blue: 0.894, alpha: 1)
-        layer.cornerRadius = 20
-        layer.cornerCurve = .continuous
-
-        directions.configuration?.title = "Directions"
-        directions.configuration?.image = UIImage(systemName: "location.fill")
-        directions.configuration?.imagePadding = 6
-        directions.configuration?.cornerStyle = .capsule
-        directions.configuration?.baseBackgroundColor = .black
-        directions.configuration?.baseForegroundColor = .white
-        directions.addAction(UIAction { [weak self] _ in self?.onDirections?() }, for: .primaryActionTriggered)
-        let directionsRow = UIStackView(arrangedSubviews: [directions, UIView()])
-
-        let upper = UIStackView(arrangedSubviews: [admit, cinema, address, directionsRow])
-        upper.axis = .vertical
-        upper.spacing = 6
-        upper.setCustomSpacing(12, after: address)
-
-        let grid = UIStackView(arrangedSubviews: [Self.cell("Screen", screen), Self.cell("Seats", seats), Self.cell("Doors", doors)])
-        grid.distribution = .fillEqually
-        grid.spacing = 8
-        [grid, footnote].forEach(lower.addArrangedSubview)
-        lower.axis = .vertical
-        lower.spacing = 12
-
-        let stack = UIStackView(arrangedSubviews: [upper, lower])
-        stack.axis = .vertical
-        stack.spacing = 36
-        addSubview(stack)
-        stack.pin(to: self, inset: 18)
-        perforation.strokeColor = UIColor(white: 0, alpha: 0.3).cgColor
-        layer.addSublayer(perforation)
+/// A friend's reaction: their initial, their one line, their name, and their rating.
+private final class ReactionRow: UIView {
+    init(initial: String, color: UIColor, line: String?, name: String, rating: Int, divider: Bool) {
+        super.init(frame: .zero)
+        let avatar = Avatar(initial, index: 0, size: 34)
+        avatar.backgroundColor = color
+        let text = UILabel.make(Theme.text(.body), Theme.text, lines: 0)
+        text.text = line ?? "Just a rating"
+        let who = UILabel.make(Theme.text(.footnote), Theme.secondary)
+        who.text = name
+        let words = UIStackView(arrangedSubviews: [text, who])
+        words.axis = .vertical
+        words.spacing = 2
+        let score = UILabel.make(Theme.text(.title2, weight: .bold), Theme.accent)
+        score.text = rating > 0 ? "\(rating)" : nil
+        score.setContentHuggingPriority(.required, for: .horizontal)
+        let row = UIStackView(arrangedSubviews: [avatar, words, score])
+        row.spacing = 12
+        row.alignment = .center
+        let box = margined(row, .init(top: 12, leading: 16, bottom: 12, trailing: 16))
+        addSubview(box)
+        box.pin(to: self)
+        if divider {
+            let rule = UIView()
+            rule.backgroundColor = Card.rule
+            addSubview(rule)
+            rule.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                rule.topAnchor.constraint(equalTo: topAnchor), rule.heightAnchor.constraint(equalToConstant: 0.5),
+                rule.leadingAnchor.constraint(equalTo: words.leadingAnchor), rule.trailingAnchor.constraint(equalTo: trailingAnchor),
+            ])
+        }
+        isAccessibilityElement = true
+        accessibilityLabel = [name, line, rating > 0 ? "rated \(rating)" : nil].compactMap { $0 }.joined(separator: ", ")
     }
     required init?(coder: NSCoder) { fatalError() }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        let y = lower.convert(CGPoint.zero, to: self).y - 18
-        let path = UIBezierPath()
-        path.move(to: CGPoint(x: 14, y: y))
-        path.addLine(to: CGPoint(x: bounds.width - 14, y: y))
-        perforation.path = path.cgPath
-    }
-
-    func configure(_ night: MovieNight, admit count: Int) {
-        let words = ["one", "two", "three", "four", "five", "six", "seven", "eight"]
-        admit.setCaps("Admit " + (count >= 1 && count <= words.count ? words[count - 1] : "\(count)"))
-        cinema.setDisplay((night.cinema ?? "Cinema to be picked").uppercased())
-        address.text = night.address
-        address.isHidden = night.address == nil
-        directions.isHidden = night.cinema == nil
-        screen.text = night.screen ?? "–"
-        seats.text = night.seats?.uppercased() ?? "–"
-        seats.adjustsFontSizeToFitWidth = true
-        seats.minimumScaleFactor = 0.5
-        let showtime = night.showtime ?? .now
-        doors.text = showtime.formatted(date: .omitted, time: .shortened)
-        let starts = NightStatus.filmStarts(showtime).formatted(date: .omitted, time: .shortened)
-        footnote.text = "Film starts about \(starts) after ads and trailers" + (night.lightsUp.map { " · out by \($0.formatted(date: .omitted, time: .shortened))" } ?? "")
-    }
-
-    private static func cell(_ caption: String, _ value: UILabel) -> UIView {
-        let label = UILabel.make(Theme.label(.caption2, weight: .bold), UIColor(white: 0.42, alpha: 1))
-        label.setCaps(caption)
-        let stack = UIStackView(arrangedSubviews: [label, value])
-        stack.axis = .vertical
-        stack.spacing = 6
-        return stack
-    }
 }

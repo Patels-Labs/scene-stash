@@ -1,41 +1,30 @@
 import UIKit
 
-/// A title as an object: the poster card floats centre stage under its own light, with everything else below.
+/// A title's page, Apple TV-style: tall art with its logo and the main buttons, then what you need to know,
+/// and shelves of episodes, cast and more.
 final class DetailViewController: UIViewController, UICollectionViewDelegate {
-    nonisolated private enum Section: Hashable { case hero, progress, stingers, punchCard, episodes, overview, providers, cast, more }
+    nonisolated private enum Section: Hashable { case hero, progress, credits, rating, episodes, providers, cast, more }
     nonisolated private enum Item: Hashable {
-        case hero, overview, progress, stingers, punchCard
-        case provider(Provider), cast(CastMember), episode(Episode), title(Title)
+        case hero, progress, credits, rating
+        case episode(Episode), provider(Provider), cast(CastMember), title(Title)
     }
 
     private let item: Title
     private var detail: TitleDetail?
-    private var accent = Theme.accent
     private var selectedSeason: Int?
     private var seasonEpisodes: [Int: [Episode]] = [:]
     private var watched: Set<EpisodeKey> = []
-    private var overviewExpanded = false
 
-    private let glow = GlowView()
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
 
-    // Hero
-    private let hero = UIStackView()
-    private let poster = TiltCardView()
-    private let kicker = UILabel.make(Theme.label(), Theme.secondary)
-    private let titleLabel = UILabel.make(Theme.display(50, weight: .black), Theme.text, lines: 0)
-    private let meta = UILabel.make(Theme.label(), Theme.tertiary, lines: 0)
-    private let billing = UILabel.make(Theme.display(12, weight: .medium, relativeTo: .caption2), Theme.secondary, lines: 0)
-    private let tagline = UILabel.make(Theme.text(.callout), Theme.secondary, lines: 0)
-    private let nextUp = UILabel.make(Theme.label(.caption1, weight: .bold), Theme.accent, lines: 0)
-    private let ticket = TicketButton()
-    private let ratingBox = UIStackView()
-    private let reel = ReelRatingView()
-    private let trailerButton = UIButton(configuration: .glass())
-    private let marathonButton = UIButton(configuration: .glass())
-    private let nightButton = UIButton(configuration: .glass())
-    private let buttonRow = UIStackView()
+    private let hero = HeroView()
+    private let primary = CapsuleButton.primary("Start Watching", image: "play.fill")
+    private let secondary = CapsuleButton.glass("Plan a Night Out", image: "person.2.fill")
+    private let trailer = CapsuleButton.circle("play.rectangle", label: "Watch trailer")
+    private let status = CapsuleButton.circle("plus", label: "Add to Watchlist")
+    private let overview = UILabel.make(Theme.text(.subheadline), UIColor(white: 1, alpha: 0.72), lines: 3)
+    private let info = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 2)
 
     init(title: Title) {
         item = title
@@ -47,26 +36,21 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         super.viewDidLoad()
         installBackdrop()
         navigationItem.largeTitleDisplayMode = .never
-        navigationItem.rightBarButtonItem = UIBarButtonItem(systemItem: .action, primaryAction: UIAction { [weak self] _ in self?.share() })
-
-        view.addSubview(glow)
-        glow.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            glow.topAnchor.constraint(equalTo: view.topAnchor),
-            glow.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            glow.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            glow.heightAnchor.constraint(equalToConstant: 620),
-        ])
-        glow.show(TMDB.imageURL(item.posterPath ?? item.backdropPath, .poster))
+        navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "square.and.arrow.up"), menu: UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] done in
+            done(self?.moreMenu() ?? [])
+        }]))
 
         collectionView.backgroundColor = .clear
+        collectionView.selfSizingInvalidation = .enabledIncludingConstraints
         collectionView.delegate = self
+        // The art runs up under the navigation bar, like the TV app.
+        collectionView.contentInsetAdjustmentBehavior = .never
+        collectionView.contentInset.bottom = 100
         view.addSubview(collectionView)
         collectionView.pin(to: view)
 
         buildHero()
         configureDataSource()
-        applyAccent()
         refreshHero()
         applySnapshot()
         load()
@@ -81,10 +65,6 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             do {
                 let detail = try await TMDB.shared.detail(item.id, item.mediaType)
                 self.detail = detail
-                if item.posterPath == nil {
-                    poster.setPoster(detail.posterPath, size: .posterLarge)
-                    glow.show(TMDB.imageURL(detail.posterPath, .poster))
-                }
                 if detail.mediaType == .tv {
                     watched = Store.shared.watched(show: detail.id)
                     let next = Progress.nextUp(seasons: seasonMap, watched: watched, aired: airedKey)
@@ -93,11 +73,6 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
                 refreshHero()
                 applySnapshot()
                 if let season = selectedSeason { loadSeason(season) }
-                if let url = TMDB.imageURL(detail.posterPath, .poster), let tint = await ImageLoader.shared.tint(for: url) {
-                    accent = tint
-                    UIView.animate(withDuration: 0.6) { self.applyAccent() }
-                    reconfigureAll()
-                }
             } catch {
                 showError(error)
             }
@@ -119,185 +94,176 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
     private var airedKey: EpisodeKey? {
         detail?.lastEpisodeToAir.map { EpisodeKey(season: $0.seasonNumber, episode: $0.episodeNumber) }
     }
-
-    private func applyAccent() {
-        ticket.setTint(accent)
-        reel.setAccent(accent)
-        nextUp.textColor = accent
-        trailerButton.tintColor = .white
-        navigationController?.navigationBar.tintColor = Theme.text
-    }
+    private var nextEpisode: EpisodeKey? { Progress.nextUp(seasons: seasonMap, watched: watched, aired: airedKey) }
+    private var tracked: Tracked? { Store.shared.tracked(item.id, item.mediaType) }
+    private var live: WatchSession.State? { WatchSession.shared.state.flatMap { $0.id == item.id ? $0 : nil } }
 
     // MARK: Hero
 
     private func buildHero() {
-        poster.cornerRadius = 16
-        poster.maxAngle = 0.18
-        poster.setPoster(item.posterPath, size: .posterLarge)
-        poster.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([poster.widthAnchor.constraint(equalToConstant: 196), poster.heightAnchor.constraint(equalToConstant: 294)])
+        hero.show(item, meta: nil)
+        let row = UIStackView(arrangedSubviews: [secondary, trailer, status])
+        row.spacing = 10
+        row.alignment = .center
+        overview.isUserInteractionEnabled = true
+        overview.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(toggleOverview)))
+        overview.accessibilityHint = "Double tap to read more"
+        [primary, row, overview, info].forEach(hero.content.addArrangedSubview)
+        hero.content.setCustomSpacing(10, after: primary)
+        hero.content.setCustomSpacing(18, after: row)
+        hero.content.setCustomSpacing(8, after: overview)
+        // Both rows of buttons run the full width, so their edges line up.
+        [primary, row, overview, info].forEach { $0.widthAnchor.constraint(equalTo: hero.content.widthAnchor).isActive = true }
 
-        [kicker, titleLabel, meta, billing, tagline, nextUp].forEach { $0.textAlignment = .center }
-        titleLabel.accessibilityTraits = .header
-        titleLabel.adjustsFontSizeToFitWidth = true
-        titleLabel.minimumScaleFactor = 0.6
-
-        ticket.onStash = { [weak self] in self?.stash() }
-
-        let ratingTitle = UILabel.make(Theme.label(), Theme.tertiary)
-        ratingTitle.setCaps("Your rating")
-        ratingTitle.textAlignment = .center
-        ratingBox.axis = .vertical
-        ratingBox.spacing = 4
-        ratingBox.addArrangedSubview(ratingTitle)
-        ratingBox.addArrangedSubview(reel)
-        reel.onChange = { [weak self] value in
+        primary.addAction(UIAction { [weak self] _ in self?.primaryTapped() }, for: .primaryActionTriggered)
+        secondary.addAction(UIAction { [weak self] _ in
             guard let self else { return }
-            let earned = value >= 9 && !poster.foil
-            Store.shared.setRating(value, for: detail?.title ?? item)
-            if earned {
-                poster.revealFoil()
-                Haptics.success()
-            }
-        }
-
-        trailerButton.configuration?.title = "Watch trailer"
-        trailerButton.configuration?.image = UIImage(systemName: "play.fill")
-        trailerButton.configuration?.imagePadding = 8
-        trailerButton.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { a in
-            var a = a; a.font = Theme.text(.subheadline, weight: .semibold); return a
-        }
-        trailerButton.addAction(UIAction { [weak self] _ in
+            item.mediaType == .movie ? planNight() : withPass { self.planMarathon() }
+        }, for: .primaryActionTriggered)
+        trailer.addAction(UIAction { [weak self] _ in
             if let url = self?.detail?.trailerURL { UIApplication.shared.open(url) }
         }, for: .primaryActionTriggered)
+        status.addAction(UIAction { [weak self] _ in self?.addToWatchlist() }, for: .primaryActionTriggered)
+    }
 
-        let posterRow = UIStackView(arrangedSubviews: [poster])
-        posterRow.axis = .vertical
-        posterRow.alignment = .center
-        let titles = UIStackView(arrangedSubviews: [kicker, titleLabel, meta, billing])
-        titles.axis = .vertical
-        titles.spacing = 6
-        titles.setCustomSpacing(14, after: meta)
-        marathonButton.configuration?.title = "Plan a marathon"
-        marathonButton.configuration?.image = UIImage(systemName: "calendar.badge.clock")
-        marathonButton.configuration?.imagePadding = 8
-        marathonButton.configuration?.titleTextAttributesTransformer = trailerButton.configuration?.titleTextAttributesTransformer
-        marathonButton.addAction(UIAction { [weak self] _ in self?.withPass { self?.planMarathon() } }, for: .primaryActionTriggered)
-        buttonRow.addArrangedSubview(trailerButton)
-        buttonRow.addArrangedSubview(marathonButton)
-        buttonRow.spacing = 10
-        nightButton.configuration?.title = "Plan a night out"
-        nightButton.configuration?.image = UIImage(systemName: "person.2.fill")
-        nightButton.configuration?.imagePadding = 8
-        nightButton.configuration?.titleTextAttributesTransformer = trailerButton.configuration?.titleTextAttributesTransformer
-        nightButton.addAction(UIAction { [weak self] _ in self?.planNight() }, for: .primaryActionTriggered)
-        nightButton.isHidden = item.mediaType != .movie
-        let trailerRow = UIStackView(arrangedSubviews: [buttonRow, nightButton])
-        trailerRow.axis = .vertical
-        trailerRow.alignment = .center
-        trailerRow.spacing = 10
-
-        [posterRow, titles, tagline, nextUp, ticket, ratingBox, trailerRow].forEach(hero.addArrangedSubview)
-        hero.axis = .vertical
-        hero.spacing = 18
-        hero.setCustomSpacing(30, after: posterRow)
-        hero.setCustomSpacing(24, after: nextUp)
-        hero.isLayoutMarginsRelativeArrangement = true
-        hero.directionalLayoutMargins = .init(top: 0, leading: 22, bottom: 10, trailing: 22)
+    @objc private func toggleOverview() {
+        overview.numberOfLines = overview.numberOfLines == 0 ? 3 : 0
+        overview.accessibilityHint = overview.numberOfLines == 0 ? nil : "Double tap to read more"
+        var snap = dataSource.snapshot()
+        snap.reconfigureItems([.hero])
+        dataSource.apply(snap, animatingDifferences: true)
     }
 
     private func refreshHero() {
         let d = detail
-        var head = [item.mediaType == .movie ? "Film" : "Series"]
-        if let year = d?.year ?? item.year { head.append(year) }
-        if let runtime = d?.runtime, runtime > 0 { head.append(item.mediaType == .movie ? DateText.runtime(runtime) : "\(runtime) min episodes") }
-        kicker.setCaps(head.joined(separator: " · "))
-        titleLabel.setDisplay((d?.name ?? item.name).uppercased(), lineHeight: 0.84)
+        var kind = [item.mediaType == .movie ? "Film" : "TV Show"]
+        kind += (d?.genres.prefix(2).map(\.name) ?? [])
+        hero.meta.text = kind.joined(separator: " · ")
+        hero.meta.isHidden = false
+
+        let tracked = tracked
+        if item.mediaType == .movie {
+            if let live {
+                primary.configuration?.title = live.pausedAt == nil ? "Pause" : "Resume"
+                primary.configuration?.image = UIImage(systemName: live.pausedAt == nil ? "pause.fill" : "play.fill")
+            } else {
+                let resume = (tracked?.position ?? 0) > 0 && tracked?.status != .seen
+                primary.configuration?.title = resume ? "Resume" : "Start Watching"
+                primary.configuration?.image = UIImage(systemName: "play.fill")
+            }
+            primary.isHidden = (d?.runtime ?? 0) == 0 && live == nil
+            let planned = Store.shared.nights(for: item).contains { $0.status() != .creditsRolled }
+            secondary.configuration?.title = planned ? "Your Night Out" : "Plan a Night Out"
+            secondary.configuration?.image = UIImage(systemName: "person.2.fill")
+            secondary.isHidden = false
+        } else {
+            if let next = nextEpisode {
+                primary.configuration?.title = "Mark S\(next.season), E\(next.episode) Watched"
+                primary.configuration?.image = UIImage(systemName: "checkmark")
+                primary.isEnabled = true
+            } else {
+                primary.configuration?.title = watched.isEmpty ? "Not Out Yet" : "All Caught Up"
+                primary.configuration?.image = nil
+                primary.isEnabled = false
+            }
+            primary.isHidden = d == nil
+            secondary.configuration?.title = "Plan a Marathon"
+            secondary.configuration?.image = UIImage(systemName: "calendar")
+            secondary.isHidden = d?.mainSeasons.isEmpty ?? true
+        }
+        trailer.isHidden = d?.trailerURL == nil
+
+        if let tracked {
+            status.configuration?.image = UIImage(systemName: "checkmark")
+            status.configuration?.baseForegroundColor = Theme.accent
+            status.accessibilityLabel = "In your library: \(tracked.status.label)"
+            status.menu = statusMenu()
+            status.showsMenuAsPrimaryAction = true
+        } else {
+            status.configuration?.image = UIImage(systemName: "plus")
+            status.configuration?.baseForegroundColor = .white
+            status.accessibilityLabel = "Add to Watchlist"
+            status.menu = nil
+            status.showsMenuAsPrimaryAction = false
+        }
+
+        overview.text = d?.overview.isEmpty == false ? d?.overview : item.overview
+        overview.isHidden = overview.text?.isEmpty ?? true
 
         var bits: [String] = []
-        if let genres = d?.genres.prefix(3).map(\.name), !genres.isEmpty { bits.append(genres.joined(separator: " / ")) }
-        if let seasons = d?.mainSeasons.count, item.mediaType == .tv, seasons > 0 { bits.append("\(seasons) season\(seasons == 1 ? "" : "s")") }
-        if let vote = d?.voteAverage ?? item.voteAverage, vote > 0 { bits.append("TMDB " + vote.formatted(.number.precision(.fractionLength(1)))) }
-        meta.setCaps(bits.joined(separator: "  ·  "), kern: 1)
-        billing.attributedText = d.map { Self.billingText($0.billing) }
-        billing.isHidden = d?.billing.isEmpty ?? true
-        tagline.text = d?.tagline.map { "“\($0)”" }
-        tagline.isHidden = d?.tagline == nil
-
-        let tracked = Store.shared.tracked(item.id, item.mediaType)
-        ticket.configure(status: tracked?.status, menu: statusMenu())
-        ratingBox.isHidden = tracked == nil || tracked?.status == .watchlist
-        let rating = Int(tracked?.rating ?? 0)
-        if !ratingBox.isHidden, reel.value != rating, !reel.isInteracting { reel.set(rating, animated: false) }
-        poster.foil = rating >= 9
-        trailerButton.isHidden = d?.trailerURL == nil
-        marathonButton.isHidden = d.map { item.mediaType == .movie ? $0.collection == nil : $0.mainSeasons.isEmpty } ?? true
-        buttonRow.isHidden = trailerButton.isHidden && marathonButton.isHidden
-        nightButton.configuration?.title = Store.shared.nights(for: item).contains { $0.status() != .creditsRolled } ? "Your night out" : "Plan a night out"
-
-        if item.mediaType == .tv, let d {
+        if let year = d?.year ?? item.year { bits.append(year) }
+        if item.mediaType == .movie {
+            if let runtime = d?.runtime, runtime > 0 { bits.append(DateText.runtime(runtime)) }
+        } else if let d {
+            let seasons = d.mainSeasons.count
+            if seasons > 0 { bits.append("\(seasons) season\(seasons == 1 ? "" : "s")") }
             let remaining = Progress.remaining(seasons: seasonMap, watched: watched, aired: airedKey)
-            if let next = Progress.nextUp(seasons: seasonMap, watched: watched, aired: airedKey) {
-                nextUp.setCaps(watched.isEmpty ? "Start with \(next.label)" : "Up next \(next.label) · \(remaining) to go", kern: 1.2)
-            } else if let upcoming = d.nextEpisodeToAir, let date = upcoming.airDate.flatMap(DateText.pretty) {
-                nextUp.setCaps("Caught up · next episode \(date)", kern: 1.2)
-            } else {
-                nextUp.setCaps(watched.isEmpty ? nil : "All caught up", kern: 1.2)
+            if let next = nextEpisode, !watched.isEmpty {
+                bits.append("Up next S\(next.season), E\(next.episode) · \(remaining) to go")
+            } else if nextEpisode == nil, let upcoming = d.nextEpisodeToAir?.airDate.flatMap(DateText.pretty) {
+                bits.append("Next episode \(upcoming)")
             }
-        } else {
-            nextUp.setCaps(nil)
         }
-        nextUp.isHidden = nextUp.attributedText == nil
-    }
-
-    /// The credits block from the bottom of a poster: roles small, names bright, all one tight run.
-    private static func billingText(_ entries: [(role: String?, name: String)]) -> NSAttributedString {
-        let style = NSMutableParagraphStyle()
-        style.alignment = .center
-        style.lineHeightMultiple = 1.05
-        let out = NSMutableAttributedString()
-        for (i, e) in entries.enumerated() {
-            if i > 0 { out.append(NSAttributedString(string: "  ", attributes: [:])) }
-            if let role = e.role { out.append(NSAttributedString(string: role.uppercased() + " ", attributes: [.foregroundColor: Theme.tertiary])) }
-            out.append(NSAttributedString(string: e.name.uppercased(), attributes: [.foregroundColor: e.role == nil ? Theme.secondary : Theme.text]))
+        if let vote = d?.voteAverage ?? item.voteAverage, vote > 0 { bits.append("TMDB " + vote.formatted(.number.precision(.fractionLength(1)))) }
+        let text = NSMutableAttributedString(string: bits.joined(separator: " · "), attributes: [.foregroundColor: Theme.secondary])
+        if let d, d.midCredits || d.afterCredits {
+            text.append(NSAttributedString(string: "  ● After-credits scene", attributes: [.foregroundColor: Theme.accent]))
         }
-        out.addAttributes([.paragraphStyle: style, .kern: 0.6], range: NSRange(location: 0, length: out.length))
-        return out
+        info.attributedText = text
     }
 
     private func statusMenu() -> UIMenu {
         let title = detail?.title ?? item
-        let current = Store.shared.tracked(item.id, item.mediaType)?.status
-        var actions: [UIMenuElement] = TrackStatus.allCases.map { status in
-            UIAction(title: status.label, image: UIImage(systemName: status.symbol), state: current == status ? .on : .off) { [weak self] _ in
-                Store.shared.track(title, status: status, runtime: self?.detail?.runtime)
+        let current = tracked?.status
+        var actions: [UIMenuElement] = TrackStatus.allCases.map { s in
+            UIAction(title: s.label, image: UIImage(systemName: s.symbol), state: current == s ? .on : .off) { [weak self] _ in
+                Store.shared.track(title, status: s, runtime: self?.detail?.runtime)
+                if s == .seen, WatchSession.shared.isWatching(title.id) { Task { await WatchSession.shared.finish() } }
                 Haptics.success()
             }
         }
-        actions.append(UIAction(title: "Remove from Stash", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in
+        actions.append(UIAction(title: "Remove from Library", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in
             Store.shared.remove(title)
         })
         return UIMenu(children: actions)
     }
 
-    private func stash() {
-        let target = stashTabPoint() ?? CGPoint(x: view.bounds.midX, y: view.bounds.maxY)
-        ticket.tear(to: target) { [weak self] in
-            guard let self else { return }
-            Store.shared.track(detail?.title ?? item, status: .watchlist, runtime: detail?.runtime)
+    private func moreMenu() -> [UIMenuElement] {
+        var items: [UIMenuElement] = [UIAction(title: "Share", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in self?.share() }]
+        if item.mediaType == .movie, detail?.collection != nil {
+            items.append(UIAction(title: "Plan a Marathon of the Series", image: UIImage(systemName: "calendar")) { [weak self] _ in
+                self?.withPass { self?.planMarathon() }
+            })
         }
+        return items
     }
 
-    /// Finds the Stash tab's button by its accessibility label to aim the torn stub.
-    private func stashTabPoint() -> CGPoint? {
-        guard let tabBar = tabBarController?.tabBar, let window = view.window else { return nil }
-        func find(_ v: UIView) -> UIView? {
-            if v.accessibilityLabel == "Stash" { return v }
-            for sub in v.subviews { if let hit = find(sub) { return hit } }
-            return nil
+    // MARK: Actions
+
+    private func primaryTapped() {
+        let title = detail?.title ?? item
+        if item.mediaType == .tv {
+            guard let next = nextEpisode else { return }
+            Haptics.success()
+            let runtime = seasonEpisodes[next.season]?.first { $0.episodeNumber == next.episode }?.runtime ?? detail?.runtime
+            Store.shared.setWatched([next], watched: true, show: title, runtime: runtime)
+            return
         }
-        let anchor = find(tabBar) ?? tabBar
-        return anchor.convert(CGPoint(x: anchor.bounds.midX, y: anchor.bounds.midY), to: window)
+        if let live {
+            Task { live.pausedAt == nil ? await WatchSession.shared.pause() : await WatchSession.shared.resume() }
+            return
+        }
+        guard let runtime = detail?.runtime, runtime > 0 else { return }
+        let from = tracked?.status == .seen ? 0 : Int(tracked?.position ?? 0)
+        let stinger = (detail?.midCredits ?? false) || (detail?.afterCredits ?? false)
+        Haptics.tap()
+        withPass { Task { await WatchSession.shared.start(title, runtime: runtime, from: from, stinger: stinger) } }
+    }
+
+    private func addToWatchlist() {
+        guard tracked == nil else { return }
+        Store.shared.track(detail?.title ?? item, status: .watchlist, runtime: detail?.runtime)
+        Haptics.success()
     }
 
     /// Opens the night already planned for this film, or starts planning one.
@@ -318,22 +284,18 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         guard let detail else { return }
         Haptics.tap()
         if item.mediaType == .movie, let series = detail.collection {
-            marathonButton.isEnabled = false
             Task {
-                defer { marathonButton.isEnabled = true }
                 let parts = (try? await TMDB.shared.collection(series.id)) ?? []
                 var runtimes: [Int: Int] = [:]
                 await withTaskGroup(of: (Int, Int?).self) { group in
                     for part in parts { group.addTask { (part.id, try? await TMDB.shared.detail(part.id, .movie).runtime) } }
                     for await (id, runtime) in group { runtimes[id] = runtime }
                 }
-                // ponytail: unseen parts only; rewatch marathons would need per-marathon progress.
+                // ponytail: unwatched parts only; rewatch marathons would need per-marathon progress.
                 let pieces = parts.filter { Store.shared.tracked($0.id, .movie)?.status != .seen }
                     .map { Piece(id: $0.id, isEpisode: false, name: $0.name, detail: nil, poster: $0.posterPath, backdrop: $0.backdropPath, minutes: runtimes[$0.id] ?? 120) }
                 guard !pieces.isEmpty else {
-                    let alert = UIAlertController(title: "You've seen the lot", message: "Every film in \(series.name) is already in your Seen shelf.", preferredStyle: .alert)
-                    alert.addAction(UIAlertAction(title: "OK", style: .default))
-                    present(alert, animated: true)
+                    alert("You've watched them all", "Every film in \(series.name) is already in Watched.")
                     return
                 }
                 let name = series.name.replacingOccurrences(of: " Collection", with: "")
@@ -344,9 +306,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
                 DateText.isPast($0.airDate) && !watched.contains(EpisodeKey(season: $0.seasonNumber, episode: $0.episodeNumber))
             }
             guard !episodes.isEmpty else {
-                let alert = UIAlertController(title: "Season \(season) is all watched", message: "Pick another season on the punch card.", preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "OK", style: .default))
-                present(alert, animated: true)
+                alert("Season \(season) is all watched", "Choose another season first.")
                 return
             }
             let pieces = episodes.map {
@@ -355,6 +315,12 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             }
             navigationController?.pushViewController(MarathonPlannerViewController(name: "\(detail.name) · Season \(season)", pieces: pieces), animated: true)
         }
+    }
+
+    private func alert(_ title: String, _ message: String) {
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
     }
 
     private func share() {
@@ -366,15 +332,16 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
 
     // MARK: Episodes
 
-    private func punch(_ episode: Episode) {
-        guard let detail else { return }
+    /// Marks an episode watched (or not). Marking one past a gap offers to catch up the season.
+    private func toggle(_ episode: Episode) {
+        guard let detail, DateText.isPast(episode.airDate) else { return }
         let key = EpisodeKey(season: episode.seasonNumber, episode: episode.episodeNumber)
         let runtime = episode.runtime ?? detail.runtime
         if watched.contains(key) {
             Store.shared.setWatched([key], watched: false, show: detail.title, runtime: runtime)
             return
         }
-        Haptics.thunk()
+        Haptics.success()
         let earlier = (seasonEpisodes[episode.seasonNumber] ?? [])
             .filter { $0.episodeNumber < episode.episodeNumber && DateText.isPast($0.airDate) }
             .map { EpisodeKey(season: $0.seasonNumber, episode: $0.episodeNumber) }
@@ -384,41 +351,42 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             return
         }
         let sheet = UIAlertController(title: "Catch up the season?", message: "You haven't marked \(earlier.count) earlier episode\(earlier.count == 1 ? "" : "s") in season \(episode.seasonNumber).", preferredStyle: .actionSheet)
-        sheet.addAction(UIAlertAction(title: "Mark all \(earlier.count + 1) watched", style: .default) { _ in
+        sheet.addAction(UIAlertAction(title: "Mark All \(earlier.count + 1) as Watched", style: .default) { _ in
             Store.shared.setWatched(earlier + [key], watched: true, show: detail.title, runtime: runtime)
         })
-        sheet.addAction(UIAlertAction(title: "Just this one", style: .default) { _ in
+        sheet.addAction(UIAlertAction(title: "Just This One", style: .default) { _ in
             Store.shared.setWatched([key], watched: true, show: detail.title, runtime: runtime)
         })
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in self?.reconfigureAll() })
-        if let cell = episodeCell(episode) { sheet.popoverPresentationController?.sourceView = cell.punch }
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let ip = dataSource.indexPath(for: .episode(episode)) { sheet.popoverPresentationController?.sourceView = collectionView.cellForItem(at: ip) }
         present(sheet, animated: true)
     }
 
-    private func punchSeason() {
-        guard let detail, let season = selectedSeason, let episodes = seasonEpisodes[season] else { return }
-        let aired = episodes.filter { DateText.isPast($0.airDate) }.map { EpisodeKey(season: $0.seasonNumber, episode: $0.episodeNumber) }
-        let all = aired.allSatisfy(watched.contains)
-        Haptics.thunk()
-        Store.shared.setWatched(aired, watched: !all, show: detail.title, runtime: detail.runtime)
-    }
-
-    private func episodeCell(_ episode: Episode) -> EpisodeCell? {
-        dataSource.indexPath(for: .episode(episode)).flatMap { collectionView.cellForItem(at: $0) as? EpisodeCell }
+    private func seasonMenu() -> UIMenu {
+        let seasons = (detail?.mainSeasons ?? []).map { s in
+            UIAction(title: "Season \(s.seasonNumber)", subtitle: "\(s.episodeCount) episodes", state: s.seasonNumber == selectedSeason ? .on : .off) { [weak self] _ in
+                self?.selectedSeason = s.seasonNumber
+                self?.loadSeason(s.seasonNumber)
+            }
+        }
+        let aired = (seasonEpisodes[selectedSeason ?? 0] ?? []).filter { DateText.isPast($0.airDate) }.map { EpisodeKey(season: $0.seasonNumber, episode: $0.episodeNumber) }
+        let all = !aired.isEmpty && aired.allSatisfy(watched.contains)
+        let mark = UIAction(title: all ? "Mark Season as Not Watched" : "Mark Season as Watched", image: UIImage(systemName: all ? "circle" : "checkmark.circle")) { [weak self] _ in
+            guard let self, let detail else { return }
+            Haptics.success()
+            Store.shared.setWatched(aired, watched: !all, show: detail.title, runtime: detail.runtime)
+        }
+        return UIMenu(children: [UIMenu(options: .displayInline, children: seasons), UIMenu(options: .displayInline, children: aired.isEmpty ? [] : [mark])])
     }
 
     @objc private func storeChanged() {
-        let before = watched
         if item.mediaType == .tv { watched = Store.shared.watched(show: item.id) }
-        // Animate only the episodes that just got marked.
-        for key in watched.subtracting(before) {
-            if let episode = seasonEpisodes[key.season]?.first(where: { $0.episodeNumber == key.episode }) {
-                episodeCell(episode)?.punch.set(true, animated: true)
-            }
-        }
         refreshHero()
         applySnapshot()
-        reconfigureAll()
+        var snap = dataSource.snapshot()
+        snap.reconfigureItems(snap.itemIdentifiers)
+        if snap.sectionIdentifiers.contains(.episodes) { snap.reloadSections([.episodes]) }
+        dataSource.apply(snap, animatingDifferences: false)
     }
 
     // MARK: Collection
@@ -426,130 +394,113 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
     private func makeLayout() -> UICollectionViewLayout {
         UICollectionViewCompositionalLayout { [weak self] index, _ in
             guard let self, let section = self.dataSource?.sectionIdentifier(for: index) else { return nil }
-            let full = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(200))
-            func list(spacing: CGFloat) -> NSCollectionLayoutSection {
-                let s = NSCollectionLayoutSection(group: .vertical(layoutSize: full, subitems: [NSCollectionLayoutItem(layoutSize: full)]))
-                s.interGroupSpacing = spacing
+            @MainActor func single(estimated: CGFloat, insets: CGFloat, header: Bool) -> NSCollectionLayoutSection {
+                let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(estimated))
+                let s = NSCollectionLayoutSection(group: .vertical(layoutSize: size, subitems: [.init(layoutSize: size)]))
+                s.contentInsets = .init(top: 0, leading: insets, bottom: 28, trailing: insets)
+                if header {
+                    let h = Shelf.header()
+                    h.contentInsets = .init(top: 0, leading: Shelf.margin - insets, bottom: 0, trailing: Shelf.margin - insets)
+                    s.boundarySupplementaryItems = [h]
+                }
                 return s
             }
-            func row(width: NSCollectionLayoutDimension, height: CGFloat, spacing: CGFloat) -> NSCollectionLayoutSection {
-                let item = NSCollectionLayoutItem(layoutSize: .init(widthDimension: width, heightDimension: .absolute(height)))
-                let group = NSCollectionLayoutGroup.horizontal(layoutSize: .init(widthDimension: width, heightDimension: .absolute(height)), subitems: [item])
-                let s = NSCollectionLayoutSection(group: group)
-                s.orthogonalScrollingBehavior = .continuous
-                s.interGroupSpacing = spacing
-                return s
-            }
-            let s: NSCollectionLayoutSection
             switch section {
-            case .hero:
-                s = list(spacing: 0)
-                s.contentInsets = .init(top: 20, leading: 0, bottom: 30, trailing: 0)
+            case .hero: return single(estimated: 860, insets: 0, header: false)
+            case .progress: return single(estimated: 140, insets: Shelf.margin, header: true)
+            case .credits: return single(estimated: 70, insets: Shelf.margin, header: false)
+            case .rating: return single(estimated: 44, insets: 0, header: true)
+            case .episodes:
+                let s = Shelf.row(width: Shelf.wide.width, height: 232)
+                s.boundarySupplementaryItems = [NSCollectionLayoutBoundarySupplementaryItem(layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .estimated(50)),
+                                                                                            elementKind: SeasonHeader.kind, alignment: .top)]
                 return s
-            case .overview, .progress, .stingers, .punchCard, .cast, .episodes: s = list(spacing: 0)
-            case .providers: s = row(width: .estimated(150), height: 68, spacing: 10)
-            case .more: s = row(width: .absolute(112), height: 168, spacing: 10)
+            case .providers:
+                let size = NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(68))
+                let s = NSCollectionLayoutSection(group: .vertical(layoutSize: size, subitems: [.init(layoutSize: size)]))
+                s.contentInsets = .init(top: 0, leading: Shelf.margin, bottom: 32, trailing: Shelf.margin)
+                s.boundarySupplementaryItems = [Shelf.header()]
+                return s
+            case .cast: return Shelf.circles()
+            case .more: return Shelf.posters()
             }
-            s.contentInsets = .init(top: 12, leading: 22, bottom: 38, trailing: 22)
-            if section == .progress || section == .punchCard || section == .stingers { s.contentInsets = .init(top: 0, leading: 16, bottom: 34, trailing: 16) }
-            if ![.overview, .progress, .stingers, .punchCard].contains(section) { s.boundarySupplementaryItems = [Layouts.headerItem()] }
-            return s
         }
     }
 
     private func configureDataSource() {
-        let hostReg = UICollectionView.CellRegistration<HostCell, Item> { [unowned self] cell, _, _ in cell.host(hero) }
-        let textReg = UICollectionView.CellRegistration<TextCell, Item> { [unowned self] cell, _, _ in
-            cell.label.text = detail?.overview.isEmpty == false ? detail?.overview : item.overview
-            cell.label.numberOfLines = overviewExpanded ? 0 : 5
-            cell.accessibilityHint = overviewExpanded ? nil : "Double tap to read more"
-        }
-        let providerReg = UICollectionView.CellRegistration<ProviderTicketCell, Item> { [unowned self] cell, _, item in
-            if case .provider(let p) = item { cell.configure(p, mine: Prefs.services.contains(p.providerId), accent: accent) }
-        }
-        let castReg = UICollectionView.CellRegistration<CompanyCell, Item> { cell, _, item in
-            if case .cast(let c) = item { cell.configure(c) }
-        }
-        let progressReg = UICollectionView.CellRegistration<FilmProgressCell, Item> { [unowned self] cell, _, _ in
+        let heroReg = UICollectionView.CellRegistration<HostCell, Item> { [unowned self] cell, _, _ in cell.host(hero) }
+        let progressReg = UICollectionView.CellRegistration<WhereYouAreCell, Item> { [unowned self] cell, _, _ in
             let runtime = detail?.runtime ?? 0
             let title = detail?.title ?? item
-            let session = WatchSession.shared.state.flatMap { $0.id == item.id ? $0 : nil }
-            cell.configure(position: Int(Store.shared.tracked(item.id, item.mediaType)?.position ?? 0), runtime: runtime, accent: accent, live: session)
+            cell.configure(position: Int(tracked?.position ?? 0), runtime: runtime, live: live)
             cell.onCommit = { Store.shared.setPosition($0, for: title, runtime: runtime) }
-            cell.onFinished = {
-                if WatchSession.shared.isWatching(title.id) { Task { await WatchSession.shared.finish() }; return }
-                Store.shared.track(title, status: .seen, runtime: runtime)
-                Haptics.success()
-            }
-            let stinger = (detail?.midCredits ?? false) || (detail?.afterCredits ?? false)
-            cell.onStart = { [weak self] seconds in
-                self?.withPass { Task { await WatchSession.shared.start(title, runtime: runtime, from: seconds, stinger: stinger) } }
-            }
-            cell.onPause = { Task { await WatchSession.shared.pause() } }
-            cell.onResume = { Task { await WatchSession.shared.resume() } }
         }
-        let stingerReg = UICollectionView.CellRegistration<StingerCell, Item> { [unowned self] cell, _, _ in
-            cell.configure(mid: detail?.midCredits ?? false, after: detail?.afterCredits ?? false)
+        let creditsReg = UICollectionView.CellRegistration<FactCell, Item> { [unowned self] cell, _, _ in
+            let mid = detail?.midCredits ?? false, after = detail?.afterCredits ?? false
+            let line = mid && after ? "Scenes during and after the credits. Stay to the very end."
+                : after ? "A scene after the credits. Wait for the very end."
+                : "A scene during the credits. Nothing at the very end."
+            cell.configure(symbol: "popcorn", title: "After-Credits Scene", detail: line)
         }
-        let punchReg = UICollectionView.CellRegistration<PunchCardCell, Item> { [unowned self] cell, _, _ in
-            let card = cell.card
-            card.rows = (detail?.mainSeasons ?? []).map { .init(season: $0.seasonNumber, count: $0.episodeCount) }
-            card.watched = watched
-            card.aired = airedKey
-            card.upNext = Progress.nextUp(seasons: seasonMap, watched: watched, aired: airedKey)
-            card.selected = selectedSeason
-            card.onSelect = { [weak self] n in
+        let ratingReg = UICollectionView.CellRegistration<RatingCell, Item> { [unowned self] cell, _, _ in
+            cell.row.set(Int(tracked?.rating ?? 0))
+            cell.row.onChange = { [weak self] value in
                 guard let self else { return }
-                selectedSeason = n
-                reconfigureAll()
-                loadSeason(n)
+                Store.shared.setRating(value, for: detail?.title ?? item)
             }
-            let remaining = Progress.remaining(seasons: seasonMap, watched: watched, aired: airedKey)
-            let aired = seasonMap.reduce(0) { total, season in
-                guard let a = airedKey else { return total + season.value }
-                return total + (season.key < a.season ? season.value : season.key == a.season ? a.episode : 0)
-            }
-            cell.configure(remaining: remaining, minutes: remaining * (detail?.runtime ?? 45), punched: watched.count, total: aired, accent: accent)
         }
-        let episodeReg = UICollectionView.CellRegistration<EpisodeCell, Item> { [unowned self] cell, _, item in
+        let episodeReg = UICollectionView.CellRegistration<EpisodeLockup, Item> { [unowned self] cell, _, item in
             guard case .episode(let e) = item else { return }
             let key = EpisodeKey(season: e.seasonNumber, episode: e.episodeNumber)
-            let next = Progress.nextUp(seasons: seasonMap, watched: watched, aired: airedKey)
-            cell.configure(e, watched: watched.contains(key), aired: DateText.isPast(e.airDate), next: key == next, accent: accent)
-            cell.onPunch = { [weak self] in self?.punch(e) }
+            cell.configure(e, watched: watched.contains(key), aired: DateText.isPast(e.airDate), next: key == nextEpisode, runtime: detail?.runtime)
         }
-        let posterReg = UICollectionView.CellRegistration<PosterCell, Item> { cell, _, item in
+        let providerReg = UICollectionView.CellRegistration<ProviderRowCell, Item> { [unowned self] cell, indexPath, item in
+            guard case .provider(let p) = item else { return }
+            let count = dataSource.snapshot().numberOfItems(inSection: .providers)
+            cell.configure(p, mine: Prefs.services.contains(p.providerId), first: indexPath.item == 0, last: indexPath.item == count - 1)
+        }
+        let castReg = UICollectionView.CellRegistration<CircleLockup, Item> { cell, _, item in
+            guard case .cast(let c) = item else { return }
+            cell.configure(photo: TMDB.imageURL(c.profilePath, .profile), initial: String(c.name.prefix(1)), name: c.name, detail: c.character)
+        }
+        let posterReg = UICollectionView.CellRegistration<PosterLockup, Item> { cell, _, item in
             if case .title(let t) = item { cell.configure(t) }
         }
-        let headerReg = UICollectionView.SupplementaryRegistration<SectionHeader>(elementKind: SectionHeader.kind) { [unowned self] header, _, indexPath in
+        let headerReg = UICollectionView.SupplementaryRegistration<ShelfHeader>(elementKind: ShelfHeader.kind) { [unowned self] header, _, indexPath in
             switch dataSource.sectionIdentifier(for: indexPath.section) {
-            case .providers: header.configure("Where to watch", caption: "Streaming in \(Prefs.region) · JustWatch")
-            case .cast: header.configure("The company", caption: "Starring")
-            case .episodes:
-                let all = (seasonEpisodes[selectedSeason ?? 0] ?? []).filter { DateText.isPast($0.airDate) }
-                    .allSatisfy { watched.contains(EpisodeKey(season: $0.seasonNumber, episode: $0.episodeNumber)) }
-                header.configure("Episodes", caption: "Season \(selectedSeason ?? 1)", accessory: all ? "Unmark all" : "Mark all") { [weak self] in self?.punchSeason() }
-                header.accessory.tintColor = accent
-            case .more: header.configure("More like this")
+            case .progress: header.configure(live == nil ? "Where You Are" : "Now Showing")
+            case .rating: header.configure("Your Rating")
+            case .providers: header.configure("How to Watch")
+            case .cast: header.configure("Cast & Crew")
+            case .more: header.configure("More Like This")
             default: header.configure("")
             }
+        }
+        let seasonReg = UICollectionView.SupplementaryRegistration<SeasonHeader>(elementKind: SeasonHeader.kind) { [unowned self] header, _, _ in
+            let next = nextEpisode
+            let states = (seasonEpisodes[selectedSeason ?? 0] ?? []).map { e -> Int in
+                let key = EpisodeKey(season: e.seasonNumber, episode: e.episodeNumber)
+                return watched.contains(key) ? 2 : key == next ? 1 : 0
+            }
+            header.configure(season: selectedSeason ?? 1, menu: seasonMenu(), states: states)
         }
 
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { cv, indexPath, item in
             switch item {
-            case .hero: cv.dequeueConfiguredReusableCell(using: hostReg, for: indexPath, item: item)
-            case .overview: cv.dequeueConfiguredReusableCell(using: textReg, for: indexPath, item: item)
+            case .hero: cv.dequeueConfiguredReusableCell(using: heroReg, for: indexPath, item: item)
+            case .progress: cv.dequeueConfiguredReusableCell(using: progressReg, for: indexPath, item: item)
+            case .credits: cv.dequeueConfiguredReusableCell(using: creditsReg, for: indexPath, item: item)
+            case .rating: cv.dequeueConfiguredReusableCell(using: ratingReg, for: indexPath, item: item)
+            case .episode: cv.dequeueConfiguredReusableCell(using: episodeReg, for: indexPath, item: item)
             case .provider: cv.dequeueConfiguredReusableCell(using: providerReg, for: indexPath, item: item)
             case .cast: cv.dequeueConfiguredReusableCell(using: castReg, for: indexPath, item: item)
-            case .progress: cv.dequeueConfiguredReusableCell(using: progressReg, for: indexPath, item: item)
-            case .punchCard: cv.dequeueConfiguredReusableCell(using: punchReg, for: indexPath, item: item)
-            case .stingers: cv.dequeueConfiguredReusableCell(using: stingerReg, for: indexPath, item: item)
-            case .episode: cv.dequeueConfiguredReusableCell(using: episodeReg, for: indexPath, item: item)
             case .title: cv.dequeueConfiguredReusableCell(using: posterReg, for: indexPath, item: item)
             }
         }
-        dataSource.supplementaryViewProvider = { cv, _, indexPath in
-            cv.dequeueConfiguredReusableSupplementary(using: headerReg, for: indexPath)
+        dataSource.supplementaryViewProvider = { cv, kind, indexPath in
+            kind == SeasonHeader.kind
+                ? cv.dequeueConfiguredReusableSupplementary(using: seasonReg, for: indexPath)
+                : cv.dequeueConfiguredReusableSupplementary(using: headerReg, for: indexPath)
         }
     }
 
@@ -557,28 +508,25 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         var snap = NSDiffableDataSourceSnapshot<Section, Item>()
         snap.appendSections([.hero])
         snap.appendItems([.hero])
-        let status = Store.shared.tracked(item.id, item.mediaType)?.status
-        if item.mediaType == .movie, (detail?.runtime ?? 0) > 0, status != .seen {
+        let status = tracked?.status
+        if item.mediaType == .movie, (detail?.runtime ?? 0) > 0, status != .seen || live != nil {
             snap.appendSections([.progress]); snap.appendItems([.progress])
         }
         if let d = detail, d.midCredits || d.afterCredits {
-            snap.appendSections([.stingers]); snap.appendItems([.stingers])
+            snap.appendSections([.credits]); snap.appendItems([.credits])
         }
-        if let seasons = detail?.mainSeasons, !seasons.isEmpty {
-            snap.appendSections([.punchCard]); snap.appendItems([.punchCard])
-            if let n = selectedSeason, let episodes = seasonEpisodes[n] {
-                snap.appendSections([.episodes]); snap.appendItems(episodes.map(Item.episode))
-            }
+        if let status, status != .watchlist {
+            snap.appendSections([.rating]); snap.appendItems([.rating])
         }
-        if !(detail?.overview ?? item.overview).isEmpty {
-            snap.appendSections([.overview]); snap.appendItems([.overview])
+        if let n = selectedSeason, let episodes = seasonEpisodes[n], !episodes.isEmpty {
+            snap.appendSections([.episodes]); snap.appendItems(episodes.map(Item.episode))
         }
         if let region = detail?.providers[Prefs.region], let flat = region.flatrate, !flat.isEmpty {
             let mine = Prefs.services
             snap.appendSections([.providers])
             snap.appendItems(flat.sorted { mine.contains($0.providerId) && !mine.contains($1.providerId) }.map(Item.provider))
         }
-        if let cast = detail?.cast.prefix(8), !cast.isEmpty {
+        if let cast = detail?.cast.prefix(12), !cast.isEmpty {
             snap.appendSections([.cast]); snap.appendItems(cast.map(Item.cast))
         }
         if let more = detail?.recommendations.filter({ $0.posterPath != nil }).prefix(12), !more.isEmpty {
@@ -587,23 +535,12 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         dataSource.apply(snap, animatingDifferences: detail != nil && !UIAccessibility.isReduceMotionEnabled)
     }
 
-    private func reconfigureAll() {
-        var snap = dataSource.snapshot()
-        snap.reconfigureItems(snap.itemIdentifiers.filter { $0 != .hero })
-        if snap.sectionIdentifiers.contains(.episodes) { snap.reloadSections([.episodes]) }
-        dataSource.apply(snap, animatingDifferences: false)
-    }
-
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         guard let selected = dataSource.itemIdentifier(for: indexPath) else { return }
         switch selected {
-        case .overview:
-            overviewExpanded.toggle()
-            var snap = dataSource.snapshot()
-            snap.reconfigureItems([.overview])
-            dataSource.apply(snap, animatingDifferences: true)
-        case .provider:
-            if let link = detail?.providers[Prefs.region]?.link, let url = URL(string: link) { UIApplication.shared.open(url) }
+        case .episode(let e): toggle(e)
+        case .provider(let p):
+            if let url = p.searchURL(for: item.name) ?? detail?.providers[Prefs.region]?.link.flatMap(URL.init(string:)) { UIApplication.shared.open(url) }
         case .title(let t):
             openDetail(t) { [weak self] in
                 self?.dataSource.indexPath(for: selected).flatMap { collectionView.cellForItem(at: $0) }
@@ -612,17 +549,19 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         }
     }
 
+    func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
+        switch dataSource.itemIdentifier(for: indexPath) {
+        case .episode, .provider, .title: true
+        default: false
+        }
+    }
+
     func collectionView(_ collectionView: UICollectionView, contextMenuConfigurationForItemsAt indexPaths: [IndexPath], point: CGPoint) -> UIContextMenuConfiguration? {
         guard let ip = indexPaths.first, case .title(let t) = dataSource.itemIdentifier(for: ip) else { return nil }
         return titleMenu(t)
     }
 
-    // The light drifts up slower than the content; pulling down lifts the card toward you.
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        let y = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
-        glow.transform = CGAffineTransform(translationX: 0, y: -max(y, 0) * 0.4)
-        let pull = max(-y, 0)
-        poster.transform = CGAffineTransform(scaleX: 1 + pull / 600, y: 1 + pull / 600)
-        navigationItem.title = y > 420 ? (detail?.name ?? item.name) : nil
+        navigationItem.title = scrollView.contentOffset.y > 520 ? (detail?.name ?? item.name) : nil
     }
 }
