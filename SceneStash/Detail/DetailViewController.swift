@@ -67,7 +67,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
                 self.detail = detail
                 if detail.mediaType == .tv {
                     watched = Store.shared.watched(show: detail.id)
-                    let next = Progress.nextUp(seasons: seasonMap, watched: watched, aired: airedKey)
+                    let next = detail.nextUp(watched: watched)
                     selectedSeason = next?.season ?? detail.mainSeasons.first?.seasonNumber
                 }
                 refreshHero()
@@ -94,7 +94,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
     private var airedKey: EpisodeKey? {
         detail?.lastEpisodeToAir.map { EpisodeKey(season: $0.seasonNumber, episode: $0.episodeNumber) }
     }
-    private var nextEpisode: EpisodeKey? { Progress.nextUp(seasons: seasonMap, watched: watched, aired: airedKey) }
+    private var nextEpisode: EpisodeKey? { detail?.nextUp(watched: watched) }
     private var tracked: Tracked? { Store.shared.tracked(item.id, item.mediaType) }
     private var live: WatchSession.State? { WatchSession.shared.state.flatMap { $0.id == item.id ? $0 : nil } }
 
@@ -332,36 +332,6 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
 
     // MARK: Episodes
 
-    /// Marks an episode watched (or not). Marking one past a gap offers to catch up the season.
-    private func toggle(_ episode: Episode) {
-        guard let detail, DateText.isPast(episode.airDate) else { return }
-        let key = EpisodeKey(season: episode.seasonNumber, episode: episode.episodeNumber)
-        let runtime = episode.runtime ?? detail.runtime
-        if watched.contains(key) {
-            Store.shared.setWatched([key], watched: false, show: detail.title, runtime: runtime)
-            return
-        }
-        Haptics.success()
-        let earlier = (seasonEpisodes[episode.seasonNumber] ?? [])
-            .filter { $0.episodeNumber < episode.episodeNumber && DateText.isPast($0.airDate) }
-            .map { EpisodeKey(season: $0.seasonNumber, episode: $0.episodeNumber) }
-            .filter { !watched.contains($0) }
-        guard !earlier.isEmpty else {
-            Store.shared.setWatched([key], watched: true, show: detail.title, runtime: runtime)
-            return
-        }
-        let sheet = UIAlertController(title: "Catch up the season?", message: "You haven't marked \(earlier.count) earlier episode\(earlier.count == 1 ? "" : "s") in season \(episode.seasonNumber).", preferredStyle: .actionSheet)
-        sheet.addAction(UIAlertAction(title: "Mark All \(earlier.count + 1) as Watched", style: .default) { _ in
-            Store.shared.setWatched(earlier + [key], watched: true, show: detail.title, runtime: runtime)
-        })
-        sheet.addAction(UIAlertAction(title: "Just This One", style: .default) { _ in
-            Store.shared.setWatched([key], watched: true, show: detail.title, runtime: runtime)
-        })
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        if let ip = dataSource.indexPath(for: .episode(episode)) { sheet.popoverPresentationController?.sourceView = collectionView.cellForItem(at: ip) }
-        present(sheet, animated: true)
-    }
-
     private func seasonMenu() -> UIMenu {
         let seasons = (detail?.mainSeasons ?? []).map { s in
             UIAction(title: "Season \(s.seasonNumber)", subtitle: "\(s.episodeCount) episodes", state: s.seasonNumber == selectedSeason ? .on : .off) { [weak self] _ in
@@ -454,6 +424,10 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             guard case .episode(let e) = item else { return }
             let key = EpisodeKey(season: e.seasonNumber, episode: e.episodeNumber)
             cell.configure(e, watched: watched.contains(key), aired: DateText.isPast(e.airDate), next: key == nextEpisode, runtime: detail?.runtime)
+            cell.onTick = { [weak self, weak cell] in
+                guard let self, let detail else { return }
+                toggleWatched(e, season: seasonEpisodes[e.seasonNumber] ?? [], show: detail, from: cell)
+            }
         }
         let providerReg = UICollectionView.CellRegistration<ProviderRowCell, Item> { [unowned self] cell, indexPath, item in
             guard case .provider(let p) = item else { return }
@@ -543,7 +517,13 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         guard let selected = dataSource.itemIdentifier(for: indexPath) else { return }
         switch selected {
-        case .episode(let e): toggle(e)
+        case .episode(let e):
+            Haptics.tap()
+            let page = EpisodeViewController(show: detail?.title ?? item, episode: e)
+            page.preferredTransition = .zoom { [weak self] _ in
+                self?.dataSource.indexPath(for: selected).flatMap { collectionView.cellForItem(at: $0) }
+            }
+            navigationController?.pushViewController(page, animated: true)
         case .provider(let p):
             if let url = p.searchURL(for: item.name) ?? detail?.providers[Prefs.region]?.link.flatMap(URL.init(string:)) { UIApplication.shared.open(url) }
         case .title(let t):

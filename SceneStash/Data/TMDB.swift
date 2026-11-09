@@ -64,6 +64,7 @@ nonisolated struct Episode: Decodable, Hashable, Sendable {
     let stillPath: String?
     let airDate: String?
     let runtime: Int?
+    var guestStars: [CastMember]? = nil
 }
 
 nonisolated struct Season: Decodable, Sendable { let episodes: [Episode] }

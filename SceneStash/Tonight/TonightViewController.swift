@@ -396,7 +396,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
 
     // MARK: Actions
 
-    /// The hero's white button: start a film on the clock, open a show, or head to the cinema.
+    /// The hero's white button: start a film on the clock, open an episode, or head to the cinema.
     private func primary(_ slot: Slot?) {
         Haptics.tap()
         switch slot {
@@ -406,7 +406,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
                 let stinger = (detail?.midCredits ?? false) || (detail?.afterCredits ?? false)
                 withPass { Task { await WatchSession.shared.start(f.title, runtime: f.runtime, from: f.position, stinger: stinger) } }
             }
-        case .episode(let u): openDetail(u.show) { nil }
+        case .episode(let u): navigationController?.pushViewController(EpisodeViewController(show: u.show, episode: u.episode), animated: true)
         case .outing(let o): if let night = Store.shared.night(uuid: o.uuid) { navigationController?.pushViewController(NightViewController(night: night), animated: true) }
         case .free, .intermission, .headOut, nil: openSearch()
         }
