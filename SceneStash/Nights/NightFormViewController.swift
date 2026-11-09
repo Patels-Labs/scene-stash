@@ -151,7 +151,7 @@ final class NightFormViewController: UIViewController, MKLocalSearchCompleterDel
         let whenRow = UIStackView(arrangedSubviews: [UILabel.make(Theme.text(.body)), when])
         (whenRow.arrangedSubviews[0] as? UILabel)?.text = "Showtime"
         let bookedLabel = UILabel.make(Theme.text(.body), Theme.text, lines: 0)
-        bookedLabel.text = "We've got tickets"
+        bookedLabel.text = "Booked"
         let bookedRow = UIStackView(arrangedSubviews: [bookedLabel, booked])
         let screenSeats = UIStackView(arrangedSubviews: [Self.field("Screen", screen), Self.field("Seats", seats)])
         screenSeats.distribution = .fillEqually
@@ -274,8 +274,8 @@ final class NightFormViewController: UIViewController, MKLocalSearchCompleterDel
     }
 
     private static func field(_ caption: String, _ input: UIView) -> UIView {
-        let label = UILabel.make(Theme.label(), Theme.tertiary)
-        label.setCaps(caption)
+        let label = UILabel.make(Theme.text(.footnote), Theme.tertiary)
+        label.text = caption
         input.accessibilityLabel = caption
         let stack = UIStackView(arrangedSubviews: [label, input])
         stack.axis = .vertical

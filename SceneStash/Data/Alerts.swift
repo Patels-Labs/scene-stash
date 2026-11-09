@@ -24,7 +24,7 @@ enum Alerts {
     }
 
     static func registerCategory() {
-        let open = UNNotificationAction(identifier: "open", title: "Open programme", options: [.foreground])
+        let open = UNNotificationAction(identifier: "open", title: "Open Tonight", options: [.foreground])
         let later = UNNotificationAction(identifier: "later", title: "Not tonight")
         UNUserNotificationCenter.current().setNotificationCategories([UNNotificationCategory(identifier: category, actions: [open, later], intentIdentifiers: [])])
     }

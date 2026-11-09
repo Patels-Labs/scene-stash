@@ -160,6 +160,8 @@ final class NightFeatureCell: UICollectionViewCell {
     private let shade = CAGradientLayer()
     private let badge = GlassLabel()
     private let name = UILabel.make(Theme.text(.largeTitle, weight: .heavy), Theme.text, lines: 2)
+    private let logo = UIImageView()
+    private var artTask: Task<Void, Never>?
     private let when = UILabel.make(Theme.text(.subheadline), UIColor(white: 1, alpha: 0.85), lines: 2)
     private let place = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 2)
     private let crew = UIStackView()
@@ -168,15 +170,19 @@ final class NightFeatureCell: UICollectionViewCell {
         super.init(frame: frame)
         contentView.addSubview(art)
         art.pin(to: contentView)
-        shade.colors = [UIColor.clear.cgColor, UIColor(white: 0, alpha: 0.88).cgColor]
-        shade.locations = [0.35, 1]
+        // Dark enough at the bottom that the words never sit on busy art.
+        shade.colors = [UIColor(white: 0, alpha: 0.25), UIColor.clear, UIColor(white: 0, alpha: 0.75), UIColor(white: 0, alpha: 0.95)].map(\.cgColor)
+        shade.locations = [0, 0.2, 0.62, 1]
         art.layer.addSublayer(shade)
         [name, when, place].forEach { $0.textAlignment = .center }
+        logo.contentMode = .scaleAspectFit
+        logo.isHidden = true
         crew.spacing = -9
-        let text = UIStackView(arrangedSubviews: [name, when, place, crew])
+        let text = UIStackView(arrangedSubviews: [logo, name, when, place, crew])
         text.axis = .vertical
         text.alignment = .center
         text.spacing = 6
+        text.setCustomSpacing(12, after: logo)
         text.setCustomSpacing(12, after: place)
         [text, badge].forEach { art.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
         NSLayoutConstraint.activate([
@@ -185,6 +191,8 @@ final class NightFeatureCell: UICollectionViewCell {
             text.bottomAnchor.constraint(equalTo: art.bottomAnchor, constant: -20),
             badge.topAnchor.constraint(equalTo: art.topAnchor, constant: 16),
             badge.leadingAnchor.constraint(equalTo: art.leadingAnchor, constant: 16),
+            logo.widthAnchor.constraint(lessThanOrEqualToConstant: 240),
+            logo.heightAnchor.constraint(equalToConstant: 80),
         ])
         isAccessibilityElement = true
         accessibilityTraits = .button
@@ -197,9 +205,32 @@ final class NightFeatureCell: UICollectionViewCell {
     }
 
     func configure(_ night: MovieNight) {
-        art.show(TMDB.imageURL(night.posterPath, .hero), name: nil)
         badge.text = night.status().label
         name.text = night.name
+        defer { shownID = night.tmdbID }
+        guard night.tmdbID != shownID else { return finish(night) }
+        art.show(TMDB.imageURL(night.posterPath, .hero), name: nil)
+        name.isHidden = false
+        logo.isHidden = true
+        // Like the hero: swap to text-free art with the film's logo, so its own title isn't printed twice.
+        artTask?.cancel()
+        artTask = Task { [weak self] in
+            let artwork = await TMDB.shared.artwork(Int(night.tmdbID), .movie)
+            guard !Task.isCancelled, let self else { return }
+            if let url = TMDB.imageURL(artwork.poster, .hero), let image = await ImageLoader.shared.image(url), !Task.isCancelled {
+                UIView.transition(with: art, duration: 0.3, options: .transitionCrossDissolve) { self.art.image = image }
+            }
+            guard let url = TMDB.imageURL(artwork.logo, .posterLarge), let image = await ImageLoader.shared.image(url), !Task.isCancelled else { return }
+            logo.image = image
+            logo.isHidden = false
+            name.isHidden = true
+        }
+        finish(night)
+    }
+
+    private var shownID: Int64?
+
+    private func finish(_ night: MovieNight) {
         let showtime = night.showtime ?? .now
         when.text = showtime.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)) + " · Showtime " + showtime.formatted(date: .omitted, time: .shortened)
             + (night.screen.map { " · Screen \($0)" } ?? "")

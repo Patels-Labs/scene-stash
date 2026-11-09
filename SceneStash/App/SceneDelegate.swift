@@ -13,7 +13,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             UITab(title: "Tonight", image: UIImage(systemName: "popcorn"), identifier: "tonight") { _ in Self.nav(TonightViewController()) },
             UITab(title: "Library", image: UIImage(systemName: "rectangle.stack"), identifier: "stash") { _ in Self.nav(LibraryViewController()) },
             UITab(title: "Nights", image: UIImage(systemName: "person.2"), identifier: "nights") { _ in Self.nav(NightsViewController()) },
-            UISearchTab { _ in Self.nav(DiscoverViewController()) },
+            UISearchTab { _ in Self.nav(SearchViewController()) },
         ])
         window.rootViewController = tabs
         #if DEBUG

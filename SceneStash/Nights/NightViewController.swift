@@ -49,7 +49,21 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
         scroll.contentInsetAdjustmentBehavior = .never
         scroll.contentInset.bottom = 100
         view.addSubview(scroll)
-        scroll.pin(to: view)
+        // The page ends at the keyboard, so Reactions can scroll up above it while you type.
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        view.keyboardLayoutGuide.usesBottomSafeArea = false
+        NSLayoutConstraint.activate([
+            scroll.topAnchor.constraint(equalTo: view.topAnchor),
+            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+        ])
+        NotificationCenter.default.addObserver(forName: UIResponder.keyboardDidShowNotification, object: nil, queue: .main) { [weak self, weak scroll] _ in
+            MainActor.assumeIsolated {
+                guard let self, let scroll, self.myLine.isFirstResponder else { return }
+                scroll.scrollRectToVisible(self.myLine.convert(self.myLine.bounds.insetBy(dx: 0, dy: -24), to: scroll), animated: true)
+            }
+        }
         let page = UIStackView(arrangedSubviews: [hero, padded(steps), section("Your Ticket", ticket), section("Who's Going", peopleRow(), inset: false),
                                                   afterSection, reactions])
         page.axis = .vertical
