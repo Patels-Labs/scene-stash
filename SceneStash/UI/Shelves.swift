@@ -442,7 +442,7 @@ final class HeroView: UIView {
     }
 
     /// Shows the art and title, then swaps in text-free art and the title's logo once TMDB has them.
-    func show(_ title: Title, poster: String? = nil, meta text: String?) {
+    func show(_ title: Title, poster: String? = nil, meta text: String?, size: ImageSize = .hero) {
         meta.text = text
         meta.isHidden = text == nil
         // Same title again (a refresh, the clock ticking): only the words move. Redrawing the art
@@ -456,11 +456,11 @@ final class HeroView: UIView {
         logoTask?.cancel()
         // Downloaded already: draw the finished page, so swiping to it never shows the art changing.
         if let artwork = Self.ready[title] {
-            art.setImage(TMDB.imageURL(poster ?? artwork.poster ?? title.posterPath, .hero))
+            art.setImage(TMDB.imageURL(poster ?? artwork.poster ?? title.posterPath, size))
             if let url = TMDB.imageURL(artwork.logo, .posterLarge), let image = ImageLoader.shared.cached(url) { setLogo(image, title) }
             return
         }
-        art.setImage(TMDB.imageURL(poster ?? title.posterPath, .hero))
+        art.setImage(TMDB.imageURL(poster ?? title.posterPath, size))
         logoTask = Task { [weak self] in
             let artwork = await TMDB.shared.artwork(title.id, title.mediaType)
             guard !Task.isCancelled, let self else { return }

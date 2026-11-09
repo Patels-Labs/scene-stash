@@ -1,6 +1,7 @@
 import UIKit
 
-/// One episode, laid out like a film page: its still, the buttons, where you are, who's in it and what's either side.
+/// One episode, built like a film page: its still as the tall art with the show's logo and the buttons over it,
+/// then where you are, who's in it and what's either side.
 final class EpisodeViewController: UIViewController, UICollectionViewDelegate {
     nonisolated private enum Section: Hashable { case head, progress, guests, around }
     nonisolated private enum Item: Hashable { case head, progress, guest(CastMember), episode(Episode) }
@@ -13,12 +14,9 @@ final class EpisodeViewController: UIViewController, UICollectionViewDelegate {
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
 
-    private let head = UIView()
-    private let still = ArtView(radius: 0)
-    private let caption = UILabel.make(Theme.text(.subheadline, weight: .semibold), Theme.secondary)
-    private let name = UILabel.make(Theme.text(.title1, weight: .bold), Theme.text, lines: 3)
-    private let meta = UILabel.make(Theme.text(.subheadline), Theme.secondary, lines: 2)
-    private let overview = UILabel.make(Theme.text(.body), UIColor(white: 1, alpha: 0.8), lines: 0)
+    private let hero = HeroView()
+    private let episodeName = UILabel.make(Theme.text(.title3, weight: .semibold), Theme.text, lines: 2)
+    private let overview = UILabel.make(Theme.text(.subheadline), UIColor(white: 1, alpha: 0.72), lines: 3)
     private let primary = CapsuleButton.primary("Start Watching", image: "play.fill")
     private let mark = CapsuleButton.glass("Mark as Watched", image: "checkmark")
 
@@ -50,7 +48,7 @@ final class EpisodeViewController: UIViewController, UICollectionViewDelegate {
         view.addSubview(collectionView)
         collectionView.pin(to: view)
 
-        buildHead()
+        buildHero()
         configureDataSource()
         showEpisode()
         applySnapshot()
@@ -75,39 +73,40 @@ final class EpisodeViewController: UIViewController, UICollectionViewDelegate {
         }
     }
 
-    private func buildHead() {
-        still.backgroundColor = Theme.surface
-        name.accessibilityTraits = .header
+    private func buildHero() {
+        episodeName.textAlignment = .center
+        episodeName.accessibilityTraits = .header
+        hero.content.insertArrangedSubview(episodeName, at: 2)
+        overview.isUserInteractionEnabled = true
+        overview.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(toggleOverview)))
+        overview.accessibilityHint = "Double tap to read more"
         primary.addAction(UIAction { [weak self] _ in self?.primaryTapped() }, for: .primaryActionTriggered)
         mark.addAction(UIAction { [weak self] _ in self?.markTapped() }, for: .primaryActionTriggered)
-        let text = UIStackView(arrangedSubviews: [caption, name, meta, primary, mark, overview])
-        text.axis = .vertical
-        text.spacing = 4
-        text.setCustomSpacing(16, after: meta)
-        text.setCustomSpacing(10, after: primary)
-        text.setCustomSpacing(18, after: mark)
-        [still, text].forEach { head.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
-        NSLayoutConstraint.activate([
-            still.topAnchor.constraint(equalTo: head.topAnchor),
-            still.leadingAnchor.constraint(equalTo: head.leadingAnchor),
-            still.trailingAnchor.constraint(equalTo: head.trailingAnchor),
-            still.heightAnchor.constraint(equalTo: still.widthAnchor, multiplier: 9.0 / 16),
-            text.topAnchor.constraint(equalTo: still.bottomAnchor, constant: 16),
-            text.leadingAnchor.constraint(equalTo: head.leadingAnchor, constant: Shelf.margin),
-            text.trailingAnchor.constraint(equalTo: head.trailingAnchor, constant: -Shelf.margin),
-            text.bottomAnchor.constraint(equalTo: head.bottomAnchor),
-        ])
+        [primary, mark, overview].forEach {
+            hero.content.addArrangedSubview($0)
+            $0.widthAnchor.constraint(equalTo: hero.content.widthAnchor).isActive = true
+        }
+        hero.content.setCustomSpacing(10, after: primary)
+        hero.content.setCustomSpacing(18, after: mark)
+    }
+
+    @objc private func toggleOverview() {
+        overview.numberOfLines = overview.numberOfLines == 0 ? 3 : 0
+        overview.accessibilityHint = overview.numberOfLines == 0 ? nil : "Double tap to read more"
+        var snap = dataSource.snapshot()
+        snap.reconfigureItems([.head])
+        dataSource.apply(snap, animatingDifferences: false)
     }
 
     /// Everything that only changes when the episode's details arrive.
     private func showEpisode() {
-        still.show(TMDB.imageURL(episode.stillPath ?? show.backdropPath, .backdrop), name: nil)
-        caption.text = "Season \(episode.seasonNumber), Episode \(episode.episodeNumber)"
-        name.text = episode.name
+        episodeName.text = episode.name
         overview.text = episode.overview
         overview.isHidden = episode.overview?.isEmpty ?? true
         let date = episode.airDate.flatMap(DateText.pretty).map { aired ? $0 : "Airs \($0)" }
-        meta.text = [show.name, date, runtime > 0 ? DateText.runtime(runtime) : nil].compactMap { $0 }.joined(separator: " · ")
+        let line = ["S\(episode.seasonNumber), E\(episode.episodeNumber)", date, runtime > 0 ? DateText.runtime(runtime) : nil]
+        // Stills are small next to posters, so this asks for the full-size image to stay sharp at this crop.
+        hero.show(detail?.title ?? show, poster: episode.stillPath, meta: line.compactMap { $0 }.joined(separator: " · "), size: episode.stillPath == nil ? .hero : .original)
         refreshButtons()
     }
 
@@ -168,7 +167,7 @@ final class EpisodeViewController: UIViewController, UICollectionViewDelegate {
                 return s
             }
             switch section {
-            case .head: return single(estimated: 520, insets: 0)
+            case .head: return single(estimated: 640, insets: 0)
             case .progress:
                 let s = single(estimated: 140, insets: Shelf.margin)
                 s.boundarySupplementaryItems = [Shelf.header()]
@@ -180,7 +179,7 @@ final class EpisodeViewController: UIViewController, UICollectionViewDelegate {
     }
 
     private func configureDataSource() {
-        let headReg = UICollectionView.CellRegistration<HostCell, Item> { [unowned self] cell, _, _ in cell.host(head) }
+        let headReg = UICollectionView.CellRegistration<HostCell, Item> { [unowned self] cell, _, _ in cell.host(hero) }
         let progressReg = UICollectionView.CellRegistration<WhereYouAreCell, Item> { [unowned self] cell, _, _ in
             let title = detail?.title ?? show, runtime = runtime
             cell.configure(position: position, runtime: runtime, live: live)
@@ -241,6 +240,10 @@ final class EpisodeViewController: UIViewController, UICollectionViewDelegate {
             snap.appendItems(around.map(Item.episode))
         }
         dataSource.apply(snap, animatingDifferences: detail != nil && !UIAccessibility.isReduceMotionEnabled)
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        navigationItem.title = scrollView.contentOffset.y > 520 ? episode.name : nil
     }
 
     func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {

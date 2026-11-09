@@ -225,6 +225,8 @@ final class EpisodeLockup: UICollectionViewCell {
     private let blurb = UILabel.make(Theme.text(.footnote), UIColor(white: 1, alpha: 0.7), lines: 3)
     private let meta = UILabel.make(Theme.text(.footnote), UIColor(white: 1, alpha: 0.85))
     private let tick = UIImageView()
+    private let tickBacking = UIImageView(image: UIImage(systemName: "circle.fill", withConfiguration: EpisodeLockup.tickSize))
+    private static let tickSize = UIImage.SymbolConfiguration(pointSize: 24, weight: .semibold)
     private let tickArea = UIButton(type: .custom)
     private var shownEpisode: Int?
     private var isWatched = false
@@ -237,9 +239,9 @@ final class EpisodeLockup: UICollectionViewCell {
         shade.colors = [UIColor.clear.cgColor, UIColor(white: 0, alpha: 0.88).cgColor]
         shade.locations = [0.2, 0.72]
         art.layer.addSublayer(shade)
-        tick.preferredSymbolConfiguration = .init(pointSize: 24, weight: .semibold)
-        tick.layer.cornerRadius = 12
         tick.isUserInteractionEnabled = false
+        tickBacking.isUserInteractionEnabled = false
+        tickBacking.tintColor = UIColor(white: 0, alpha: 0.35)
         tickArea.addAction(UIAction { [weak self] _ in self?.onTick?() }, for: .primaryActionTriggered)
         let text = UIStackView(arrangedSubviews: [label, name, blurb, meta])
         text.axis = .vertical
@@ -249,8 +251,9 @@ final class EpisodeLockup: UICollectionViewCell {
         text.translatesAutoresizingMaskIntoConstraints = false
         // Art is an image view and ignores touches, so the button sits beside it in the cell.
         contentView.addSubview(tickArea)
-        tickArea.addSubview(tick)
-        [tickArea, tick].forEach { $0.translatesAutoresizingMaskIntoConstraints = false }
+        // The dimming behind the ring is the same symbol, filled, so the two are always the same circle.
+        [tickBacking, tick].forEach(tickArea.addSubview)
+        [tickArea, tickBacking, tick].forEach { $0.translatesAutoresizingMaskIntoConstraints = false }
         NSLayoutConstraint.activate([
             text.leadingAnchor.constraint(equalTo: art.leadingAnchor, constant: 16),
             text.trailingAnchor.constraint(equalTo: art.trailingAnchor, constant: -16),
@@ -261,6 +264,8 @@ final class EpisodeLockup: UICollectionViewCell {
             tickArea.heightAnchor.constraint(equalToConstant: 54),
             tick.centerXAnchor.constraint(equalTo: tickArea.centerXAnchor),
             tick.centerYAnchor.constraint(equalTo: tickArea.centerYAnchor),
+            tickBacking.centerXAnchor.constraint(equalTo: tick.centerXAnchor),
+            tickBacking.centerYAnchor.constraint(equalTo: tick.centerYAnchor),
         ])
         isAccessibilityElement = true
         accessibilityTraits = .button
@@ -286,12 +291,14 @@ final class EpisodeLockup: UICollectionViewCell {
             meta.text = length
         }
         // Only the episode you just tapped animates; a recycled cell just shows its new state.
-        let symbol = UIImage(systemName: watched ? "checkmark.circle.fill" : "circle")!
+        let symbol = watched
+            ? UIImage(systemName: "checkmark.circle.fill", withConfiguration: Self.tickSize.applying(UIImage.SymbolConfiguration(paletteColors: [.black, Theme.accent])))!
+            : UIImage(systemName: "circle", withConfiguration: Self.tickSize)!
         if shownEpisode == e.id, isWatched != watched { tick.setSymbolImage(symbol, contentTransition: .replace) } else { tick.image = symbol }
         shownEpisode = e.id
         isWatched = watched
-        tick.tintColor = watched ? Theme.accent : .white
-        tick.backgroundColor = UIColor(white: 0, alpha: watched ? 1 : 0.35)
+        tick.tintColor = .white
+        tickBacking.isHidden = watched
         tickArea.isHidden = !aired
         contentView.alpha = aired ? 1 : 0.55
         accessibilityLabel = "Episode \(e.episodeNumber), \(e.name)" + (watched ? ", watched" : "") + (aired ? "" : ", not out yet")
