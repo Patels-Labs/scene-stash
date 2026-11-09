@@ -301,6 +301,8 @@ final class CircleLockup: UICollectionViewCell {
         captions.set(name, detail)
         accessibilityLabel = [name, detail].compactMap { $0 }.joined(separator: ", ")
     }
+
+    override var isHighlighted: Bool { didSet { Spring.press(self, isHighlighted) } }
 }
 
 /// A small frosted label, for a status on top of artwork.
@@ -316,11 +318,11 @@ final class GlassLabel: UIView {
         addSubview(glass)
         glass.pin(to: self)
         glass.contentView.addSubview(label)
-        label.pin(to: glass.contentView, inset: 0)
         label.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor, constant: 10),
-            label.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor, constant: -10),
+            label.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor, constant: -12),
+            label.centerYAnchor.constraint(equalTo: glass.contentView.centerYAnchor),
             heightAnchor.constraint(equalToConstant: 26),
         ])
     }
@@ -362,6 +364,7 @@ enum CapsuleButton {
         c.title = title
         c.image = image.flatMap { UIImage(systemName: $0) }
         c.imagePadding = 8
+        c.titleLineBreakMode = .byTruncatingTail
         c.preferredSymbolConfigurationForImage = .init(pointSize: 15, weight: .semibold)
         c.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { a in
             var a = a; a.font = Theme.text(.body, weight: .semibold); return a
@@ -385,14 +388,21 @@ final class HeroView: UIView {
     let content = UIStackView()
     private let shade = CAGradientLayer()
     private var logoTask: Task<Void, Never>?
+    /// How far the buttons sit above the art's bottom edge; more when something else lives there.
+    private(set) lazy var contentBottom = content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -20)
+    /// Artwork that's already downloaded, so a hero can draw its finished state straight away.
+    private static var ready: [Title: TMDB.Artwork] = [:]
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         art.contentMode = .scaleAspectFill
         art.clipsToBounds = true
         art.backgroundColor = Theme.surface
-        shade.colors = [UIColor(white: 0, alpha: 0.35), .clear, .clear, UIColor(white: 0, alpha: 0.85), .black].map(\.cgColor)
-        shade.locations = [0, 0.18, 0.45, 0.8, 1]
+        // An image view asks to be as tall as its image; left alone that beats the 2:3 hug below.
+        art.setContentCompressionResistancePriority(.fittingSizeLevel, for: .vertical)
+        // Stops short of black: the art ends on a clean edge rather than dissolving into the page.
+        shade.colors = [UIColor(white: 0, alpha: 0.35), .clear, .clear, UIColor(white: 0, alpha: 0.72), UIColor(white: 0, alpha: 0.9)].map(\.cgColor)
+        shade.locations = [0, 0.18, 0.38, 0.72, 1]
         art.layer.addSublayer(shade)
         logo.contentMode = .scaleAspectFit
         logo.isHidden = true
@@ -409,17 +419,18 @@ final class HeroView: UIView {
             art.topAnchor.constraint(equalTo: topAnchor),
             art.leadingAnchor.constraint(equalTo: leadingAnchor),
             art.trailingAnchor.constraint(equalTo: trailingAnchor),
-            art.heightAnchor.constraint(equalTo: art.widthAnchor, multiplier: 1.5),
+            art.bottomAnchor.constraint(equalTo: bottomAnchor),
+            art.heightAnchor.constraint(greaterThanOrEqualTo: art.widthAnchor, multiplier: 1.5),
             logo.widthAnchor.constraint(lessThanOrEqualToConstant: 280),
             logo.heightAnchor.constraint(lessThanOrEqualToConstant: 110),
+            logo.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
             content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Shelf.margin),
             content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Shelf.margin),
-            // Overlaps the bottom of the art, and pushes the view taller if there's a lot to say.
-            content.topAnchor.constraint(greaterThanOrEqualTo: art.bottomAnchor, constant: -250),
-            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            bottomAnchor.constraint(greaterThanOrEqualTo: art.bottomAnchor),
+            contentBottom,
+            // The art stays 2:3 unless there's a lot to say, then it grows to keep the words on it.
+            content.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 110),
         ])
-        let hug = content.topAnchor.constraint(equalTo: art.bottomAnchor, constant: -250)
+        let hug = art.heightAnchor.constraint(equalTo: art.widthAnchor, multiplier: 1.5)
         hug.priority = .defaultLow
         hug.isActive = true
     }
@@ -432,13 +443,24 @@ final class HeroView: UIView {
 
     /// Shows the art and title, then swaps in text-free art and the title's logo once TMDB has them.
     func show(_ title: Title, poster: String? = nil, meta text: String?) {
-        art.setImage(TMDB.imageURL(poster ?? title.posterPath, .hero))
+        meta.text = text
+        meta.isHidden = text == nil
+        // Same title again (a refresh, the clock ticking): only the words move. Redrawing the art
+        // would flash the text-on poster back in before the clean one fades over it.
+        let key = "\(title.mediaType)\(title.id)/\(poster ?? "")"
+        guard key != shown else { return }
+        shown = key
         name.text = title.name
         name.isHidden = false
         logo.isHidden = true
-        meta.text = text
-        meta.isHidden = text == nil
         logoTask?.cancel()
+        // Downloaded already: draw the finished page, so swiping to it never shows the art changing.
+        if let artwork = Self.ready[title] {
+            art.setImage(TMDB.imageURL(poster ?? artwork.poster ?? title.posterPath, .hero))
+            if let url = TMDB.imageURL(artwork.logo, .posterLarge), let image = ImageLoader.shared.cached(url) { setLogo(image, title) }
+            return
+        }
+        art.setImage(TMDB.imageURL(poster ?? title.posterPath, .hero))
         logoTask = Task { [weak self] in
             let artwork = await TMDB.shared.artwork(title.id, title.mediaType)
             guard !Task.isCancelled, let self else { return }
@@ -446,17 +468,32 @@ final class HeroView: UIView {
                 UIView.transition(with: art, duration: 0.3, options: .transitionCrossDissolve) { self.art.image = image }
             }
             guard let url = TMDB.imageURL(artwork.logo, .posterLarge), let image = await ImageLoader.shared.image(url), !Task.isCancelled else { return }
-            logo.image = image
-            logoRatio?.isActive = false
-            logoRatio = logo.widthAnchor.constraint(equalTo: logo.heightAnchor, multiplier: image.size.width / max(image.size.height, 1))
-            logoRatio?.isActive = true
-            logo.isHidden = false
-            name.isHidden = true
-            logo.accessibilityLabel = title.name
-            logo.isAccessibilityElement = true
+            setLogo(image, title)
         }
     }
+
+    /// Downloads a title's clean art and logo ahead of time, for heroes that aren't on screen yet.
+    static func prepare(_ title: Title) async {
+        guard ready[title] == nil else { return }
+        let artwork = await TMDB.shared.artwork(title.id, title.mediaType)
+        for url in [TMDB.imageURL(artwork.poster, .hero), TMDB.imageURL(artwork.logo, .posterLarge)].compactMap({ $0 }) {
+            _ = await ImageLoader.shared.image(url)
+        }
+        ready[title] = artwork
+    }
+
+    private func setLogo(_ image: UIImage, _ title: Title) {
+        logo.image = image
+        logoRatio?.isActive = false
+        logoRatio = logo.widthAnchor.constraint(equalTo: logo.heightAnchor, multiplier: image.size.width / max(image.size.height, 1))
+        logoRatio?.isActive = true
+        logo.isHidden = false
+        name.isHidden = true
+        logo.accessibilityLabel = title.name
+        logo.isAccessibilityElement = true
+    }
     private var logoRatio: NSLayoutConstraint?
+    private var shown: String?
 }
 
 /// A screen with nothing on it yet: a title and a line saying how to fill it.
@@ -475,9 +512,10 @@ final class EmptyCell: UICollectionViewCell {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(_ title: String, _ body: String) {
+    func configure(_ title: String?, _ body: String) {
         self.title.text = title
+        self.title.isHidden = title == nil
         self.body.text = body
-        accessibilityLabel = "\(title). \(body)"
+        accessibilityLabel = [title, body].compactMap { $0 }.joined(separator: ". ")
     }
 }

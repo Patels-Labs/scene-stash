@@ -12,7 +12,7 @@ struct SceneStashWidgets: WidgetBundle {
     var body: some Widget {
         TonightWidget()
         PremiereWidget()
-        PunchCardWidget()
+        UpNextWidget()
         #if !targetEnvironment(macCatalyst)
         NowShowingLiveActivity()
         #endif
@@ -21,8 +21,6 @@ struct SceneStashWidgets: WidgetBundle {
 
 // MARK: - Shared look
 
-private let amber = Color(hex: "F5B544")
-
 extension Color {
     init(hex: String) {
         let v = UInt64(hex, radix: 16) ?? 0xF5B544
@@ -30,24 +28,32 @@ extension Color {
     }
 }
 
-extension Font {
-    static func display(_ size: CGFloat) -> Font { .system(size: size, weight: .black).width(.compressed) }
-    static func caps(_ size: CGFloat = 9) -> Font { .system(size: size, weight: .bold).width(.expanded) }
-}
+/// A saved poster filling the widget, or the title's colour when there's no poster on disk, shaded for white type.
+private struct Art: View {
+    let id: Int?
+    var tint: String? = nil
 
-private struct Caps: View {
-    let text: String
-    var color: Color = .white.opacity(0.62)
-    var size: CGFloat = 9
-    var body: some View { Text(text.uppercased()).font(.caps(size)).tracking(1.2).foregroundStyle(color).lineLimit(1) }
-}
-
-/// Shown in place of a widget's content until the All-Access Pass is unlocked.
-private struct Locked: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Caps(text: "All-Access Pass", color: amber)
-            Text("UNLOCK IN SCENE STASH").font(.display(22)).foregroundStyle(.white)
+        Group {
+            if let id, let url = SharedBox.posterURL(id), let image = UIImage(contentsOfFile: url.path) {
+                Color.clear.overlay(Image(uiImage: image).resizable().scaledToFill()).clipped()
+            } else {
+                tint.map { Color(hex: $0) } ?? Color.black
+            }
+        }
+        .overlay(LinearGradient(colors: [.clear, .black.opacity(0.85)], startPoint: .center, endPoint: .bottom))
+    }
+}
+
+/// A widget with nothing to show, or locked: a small label over a bold line.
+private struct Message: View {
+    let label: String
+    let title: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.caption.weight(.semibold)).foregroundStyle(.white.opacity(0.7))
+            Text(title).font(.system(.headline, weight: .bold)).foregroundStyle(.white)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
     }
@@ -92,10 +98,11 @@ nonisolated extension WidgetSnapshot {
 struct TonightWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "tonight", provider: SnapshotProvider()) { entry in
-            TonightView(snapshot: entry.snapshot).containerBackground(.black, for: .widget)
+            let first = entry.snapshot.unlocked ? entry.snapshot.programme.first : nil
+            TonightView(snapshot: entry.snapshot).containerBackground(for: .widget) { Art(id: first?.id, tint: first?.tint) }
         }
         .configurationDisplayName("Tonight")
-        .description("Tonight's programme, on the clock.")
+        .description("What's on tonight, and when.")
         .supportedFamilies([.systemMedium, .systemLarge])
     }
 }
@@ -105,37 +112,32 @@ private struct TonightView: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        if !snapshot.unlocked { Locked() } else if snapshot.programme.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                Caps(text: "Tonight")
-                Text("NOTHING ON,\nYET.").font(.display(30)).foregroundStyle(.white)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-        } else {
-            VStack(alignment: .leading, spacing: 8) {
+        if !snapshot.unlocked { Message(label: "All-Access Pass", title: "Unlock in Scene Stash") } else if let first = snapshot.programme.first {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack {
-                    Caps(text: "Tonight" + (snapshot.doors.map { " · Doors " + $0.formatted(date: .omitted, time: .shortened) } ?? ""))
-                    Spacer()
-                    Caps(text: "\(snapshot.booked / 60)h \(snapshot.booked % 60)m")
+                    Text("Tonight" + (snapshot.doors.map { " · From " + $0.formatted(date: .omitted, time: .shortened) } ?? ""))
+                    Spacer(minLength: 4)
+                    Text("\(snapshot.booked / 60)h \(snapshot.booked % 60)m")
                 }
-                ForEach(Array(snapshot.programme.prefix(family == .systemLarge ? 4 : 2).enumerated()), id: \.offset) { i, slot in
-                    HStack(spacing: 8) {
-                        Caps(text: slot.start.formatted(date: .omitted, time: .shortened), color: i == 0 ? Color(hex: "FF5A4E") : .white.opacity(0.5), size: 8)
-                            .frame(width: 40, alignment: .leading)
-                        HStack {
-                            Text(slot.name.uppercased()).font(.display(18)).lineLimit(1)
-                            Spacer(minLength: 4)
-                            Caps(text: slot.code, color: .white.opacity(0.85), size: 7)
-                        }
-                        .padding(.horizontal, 10)
-                        .frame(maxWidth: .infinity, minHeight: 34)
-                        .background(LinearGradient(colors: [Color(hex: slot.tint).opacity(0.35), Color(hex: slot.tint)], startPoint: .leading, endPoint: .trailing),
-                                    in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        .foregroundStyle(.white)
-                    }
-                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.85))
+                .lineLimit(1)
                 Spacer(minLength: 0)
+                Text(first.name).font(.system(.title2, weight: .bold)).lineLimit(1)
+                Text(first.start.formatted(date: .omitted, time: .shortened) + " · " + first.code).font(.subheadline).lineLimit(1)
+                ForEach(Array(snapshot.programme.prefix(family == .systemLarge ? 4 : 2).dropFirst().enumerated()), id: \.offset) { _, slot in
+                    HStack {
+                        Text(slot.name).lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(slot.start.formatted(date: .omitted, time: .shortened)).foregroundStyle(.white.opacity(0.75))
+                    }
+                    .font(.footnote)
+                }
             }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        } else {
+            Message(label: "Tonight", title: "Nothing on yet")
         }
     }
 }
@@ -145,10 +147,11 @@ private struct TonightView: View {
 struct PremiereWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "premiere", provider: SnapshotProvider()) { entry in
-            PremiereView(snapshot: entry.snapshot, now: entry.date).containerBackground(.black, for: .widget)
+            PremiereView(snapshot: entry.snapshot, now: entry.date)
+                .containerBackground(for: .widget) { Art(id: entry.snapshot.unlocked ? entry.snapshot.premiere?.id : nil) }
         }
         .configurationDisplayName("Coming soon")
-        .description("Days until the next premiere in your stash.")
+        .description("Days until the next new episode or season in your library.")
         .supportedFamilies([.systemSmall])
     }
 }
@@ -158,80 +161,53 @@ private struct PremiereView: View {
     let now: Date
 
     var body: some View {
-        if !snapshot.unlocked { Locked() } else if let p = snapshot.premiere {
+        if !snapshot.unlocked { Message(label: "All-Access Pass", title: "Unlock in Scene Stash") } else if let p = snapshot.premiere {
             let days = max(Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: now), to: p.date).day ?? 0, 0)
-            VStack(alignment: .leading, spacing: 0) {
-                Caps(text: days == 0 ? "Out today" : "Premieres in")
-                Spacer(minLength: 0)
-                if days > 0 {
-                    Text("\(days)").font(.display(60)).foregroundStyle(.white)
-                    Caps(text: days == 1 ? "Day" : "Days", color: .white, size: 8)
-                }
-                Spacer(minLength: 4)
-                Text(p.name.uppercased()).font(.display(20)).foregroundStyle(.white).lineLimit(2)
-                Caps(text: p.label, size: 7)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(days == 0 ? "Out today" : days == 1 ? "In 1 day" : "In \(days) days").font(.caption.weight(.semibold))
+                Text(p.name).font(.system(.headline, weight: .bold)).lineLimit(2)
+                Text(p.label).font(.caption2).foregroundStyle(.white.opacity(0.75)).lineLimit(1)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        } else {
-            VStack(alignment: .leading, spacing: 4) {
-                Caps(text: "Coming soon")
-                Text("NOTHING\nANNOUNCED").font(.display(24)).foregroundStyle(.white)
-            }
+            .foregroundStyle(.white)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        } else {
+            Message(label: "Coming soon", title: "Nothing announced")
         }
     }
 }
 
-// MARK: - Punch card
+// MARK: - Up Next
 
-struct PunchCardWidget: Widget {
+struct UpNextWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "punchcard", provider: SnapshotProvider()) { entry in
-            PunchCardView(snapshot: entry.snapshot).containerBackground(Color(hex: "0D1416"), for: .widget)
+            UpNextView(snapshot: entry.snapshot)
+                .containerBackground(for: .widget) { Art(id: entry.snapshot.unlocked ? entry.snapshot.card?.id : nil) }
         }
-        .configurationDisplayName("Punch card")
-        .description("The season you're on, hole by hole.")
+        .configurationDisplayName("Up Next")
+        .description("The season you're on, episode by episode.")
         .supportedFamilies([.systemSmall])
     }
 }
 
-private struct PunchCardView: View {
+private struct UpNextView: View {
     let snapshot: WidgetSnapshot
-    private let teal = Color(hex: "8FD4DC")
 
     var body: some View {
-        if !snapshot.unlocked { Locked() } else if let card = snapshot.card {
-            VStack(alignment: .leading, spacing: 6) {
-                Caps(text: "Punch card · S\(card.season)", color: teal)
-                holes(card.holes)
-                Text(card.name.uppercased()).font(.display(18)).foregroundStyle(.white).lineLimit(1).minimumScaleFactor(0.6)
-                Caps(text: card.left == 0 ? "Caught up" : "\(card.left) left", size: 7)
-            }
-        } else {
+        if !snapshot.unlocked { Message(label: "All-Access Pass", title: "Unlock in Scene Stash") } else if let card = snapshot.card {
+            let watched = card.holes.filter { $0 == 1 }.count
             VStack(alignment: .leading, spacing: 4) {
-                Caps(text: "Punch card", color: teal)
-                Text("START A\nSHOW").font(.display(26)).foregroundStyle(.white)
+                Text(card.name).font(.system(.headline, weight: .bold)).lineLimit(2)
+                Text("Season \(card.season) · " + (card.left == 0 ? "Caught up" : "\(card.left) left")).font(.caption2).foregroundStyle(.white.opacity(0.75)).lineLimit(1)
+                ProgressView(value: Double(watched), total: Double(max(card.holes.count, 1)))
+                    .progressViewStyle(.linear)
+                    .tint(.white)
+                    .accessibilityLabel("\(watched) of \(card.holes.count) episodes watched")
             }
+            .foregroundStyle(.white)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-        }
-    }
-
-    /// Three rows of seven, sized to the space left. Longer seasons show the rows around the next episode.
-    private func holes(_ all: [Int]) -> some View {
-        let (cols, rows, gap): (Int, Int, CGFloat) = (7, 3, 4)
-        let next = all.firstIndex(of: 2) ?? 0
-        let start = max(0, min((next / cols - 1) * cols, (all.count - cols * rows + cols - 1) / cols * cols))
-        let shown = Array(all.dropFirst(start).prefix(cols * rows))
-        return GeometryReader { geo in
-            let d = min((geo.size.width - gap * CGFloat(cols - 1)) / CGFloat(cols), (geo.size.height - gap * CGFloat(rows - 1)) / CGFloat(rows))
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(d), spacing: gap), count: cols), alignment: .leading, spacing: gap) {
-                ForEach(Array(shown.enumerated()), id: \.offset) { _, hole in
-                    Circle()
-                        .fill(hole == 1 ? Color.black : hole == 2 ? Color.clear : Color(hex: "22343A"))
-                        .overlay(Circle().strokeBorder(hole == 2 ? teal : hole == 1 ? teal.opacity(0.4) : .clear, lineWidth: hole == 2 ? 2 : 1))
-                        .frame(width: d, height: d)
-                }
-            }
+        } else {
+            Message(label: "Up Next", title: "Start a show")
         }
     }
 }
@@ -244,7 +220,7 @@ struct NowShowingLiveActivity: Widget {
         ActivityConfiguration(for: NowShowingAttributes.self) { context in
             LockScreenView(attributes: context.attributes, state: context.state)
                 .padding(16)
-                .activityBackgroundTint(Color(red: 0.08, green: 0.06, blue: 0.04).opacity(0.85))
+                .activityBackgroundTint(Color.black.opacity(0.85))
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
             let a = context.attributes, s = context.state, tint = Color(hex: a.tint)
@@ -252,18 +228,18 @@ struct NowShowingLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.leading) { Poster(id: a.id, tint: tint).frame(width: 36, height: 54) }
                 DynamicIslandExpandedRegion(.center) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(s.pausedAt == nil ? a.name.uppercased() : "PAUSED").font(.display(22)).lineLimit(1)
+                        Text(s.pausedAt == nil ? a.name : "Paused").font(.system(.headline, weight: .bold)).lineLimit(1)
                         Status(attributes: a, state: s).font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) { Controls(state: s, tint: tint) }
-                DynamicIslandExpandedRegion(.bottom) { Strip(attributes: a, state: s, tint: tint).frame(height: 10) }
+                DynamicIslandExpandedRegion(.bottom) { TimeBar(attributes: a, state: s, tint: tint) }
             } compactLeading: {
                 Poster(id: a.id, tint: tint).frame(width: 22, height: 22).clipShape(RoundedRectangle(cornerRadius: 6))
             } compactTrailing: {
                 if s.finished { Image(systemName: "checkmark").foregroundStyle(tint) }
                 else if s.pausedAt != nil { Image(systemName: "pause.fill").foregroundStyle(tint) }
-                else { Text(timerInterval: Date.now...max(a.end(s), .now), countsDown: true).font(.display(16)).foregroundStyle(tint).frame(maxWidth: 52).monospacedDigit() }
+                else { Text(timerInterval: Date.now...max(a.end(s), .now), countsDown: true).font(.system(.caption, weight: .semibold)).foregroundStyle(tint).frame(maxWidth: 52).monospacedDigit() }
             } minimal: {
                 Circle().fill(tint).frame(width: 12, height: 12)
             }
@@ -281,22 +257,22 @@ private struct LockScreenView: View {
             HStack(spacing: 12) {
                 Poster(id: attributes.id, tint: tint).frame(width: 44, height: 66)
                 VStack(alignment: .leading, spacing: 3) {
-                    Caps(text: state.finished ? "Finished" : state.pausedAt == nil ? "Now showing" : "Paused", color: tint, size: 8)
-                    Text(attributes.name.uppercased()).font(.display(28)).foregroundStyle(.white).lineLimit(1)
+                    Text(state.finished ? "Finished" : state.pausedAt == nil ? "Now Showing" : "Paused").font(.caption.weight(.semibold)).foregroundStyle(tint).lineLimit(1)
+                    Text(attributes.name).font(.system(.title3, weight: .bold)).foregroundStyle(.white).lineLimit(1)
                     Status(attributes: attributes, state: state).font(.system(size: 12)).foregroundStyle(.white.opacity(0.65))
                 }
                 Spacer(minLength: 0)
                 Controls(state: state, tint: tint)
             }
-            Strip(attributes: attributes, state: state, tint: tint).frame(height: 16)
+            TimeBar(attributes: attributes, state: state, tint: tint)
             if attributes.stinger, !state.finished {
                 HStack(spacing: 8) {
-                    Caps(text: "Stay seated", color: amber, size: 7)
+                    Text("After the credits").font(.caption.weight(.semibold)).foregroundStyle(.white).lineLimit(1)
                     Text("There's a scene during or after the credits.").font(.system(size: 12)).foregroundStyle(.white.opacity(0.8))
                 }
                 .padding(.horizontal, 10).padding(.vertical, 7)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(amber.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
             }
         }
     }
@@ -309,7 +285,7 @@ private struct Status: View {
 
     var body: some View {
         if state.finished {
-            Text("Marked seen. Rate it in Scene Stash.")
+            Text("Marked as watched. Rate it in Scene Stash.")
         } else if state.pausedAt != nil {
             let s = Int(state.elapsed())
             Text(String(format: "At %d:%02d:%02d · end time moves with you", s / 3600, s % 3600 / 60, s % 60))
@@ -350,8 +326,8 @@ private struct Controls: View {
     }
 }
 
-/// A sliver of film: frames filling with the poster's colour; it runs itself while playing.
-private struct Strip: View {
+/// How far through you are, in the poster's colour; it runs itself while playing.
+private struct TimeBar: View {
     let attributes: NowShowingAttributes
     let state: NowShowingAttributes.ContentState
     let tint: Color
@@ -367,9 +343,6 @@ private struct Strip: View {
         }
         .progressViewStyle(.linear)
         .tint(tint)
-        .padding(.horizontal, 2)
-        .padding(.vertical, 4)
-        .background(Color(white: 0.1), in: RoundedRectangle(cornerRadius: 4))
     }
 }
 

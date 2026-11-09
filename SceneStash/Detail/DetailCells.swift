@@ -145,15 +145,16 @@ final class FactCell: UICollectionViewCell {
 }
 
 /// Your rating, 1 to 10, as a row of round buttons. Tapping the chosen one clears it.
-final class RatingCell: UICollectionViewCell {
+final class RatingRow: UIView {
     var onChange: ((Int) -> Void)?
+    private(set) var value = 0
     private var buttons: [UIButton] = []
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
+    init(inset: CGFloat = Shelf.margin) {
+        super.init(frame: .zero)
         let scroll = UIScrollView()
         scroll.showsHorizontalScrollIndicator = false
-        scroll.contentInset = .init(top: 0, left: Shelf.margin, bottom: 0, right: Shelf.margin)
+        scroll.contentInset = .init(top: 0, left: inset, bottom: 0, right: inset)
         let row = UIStackView()
         row.spacing = 8
         for n in 1...10 {
@@ -171,8 +172,8 @@ final class RatingCell: UICollectionViewCell {
             buttons.append(b)
             row.addArrangedSubview(b)
         }
-        contentView.addSubview(scroll)
-        scroll.pin(to: contentView)
+        addSubview(scroll)
+        scroll.pin(to: self)
         scroll.addSubview(row)
         row.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -181,13 +182,12 @@ final class RatingCell: UICollectionViewCell {
             row.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
             row.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
             row.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor),
+            heightAnchor.constraint(equalToConstant: 44),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    private var value = 0
-
-    func configure(_ rating: Int) {
+    func set(_ rating: Int) {
         value = rating
         for (i, b) in buttons.enumerated() {
             let on = i + 1 == rating
@@ -198,18 +198,29 @@ final class RatingCell: UICollectionViewCell {
     }
 
     private func tap(_ n: Int) {
-        let next = n == value ? 0 : n
-        configure(next)
+        set(n == value ? 0 : n)
         Haptics.tap()
-        onChange?(next)
+        onChange?(value)
     }
+}
+
+/// The rating row as a page section.
+final class RatingCell: UICollectionViewCell {
+    let row = RatingRow()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentView.addSubview(row)
+        row.pin(to: contentView)
+    }
+    required init?(coder: NSCoder) { fatalError() }
 }
 
 /// An episode as a tall card: the still with its number, name and a few lines over it, and a tick when watched.
 final class EpisodeLockup: UICollectionViewCell {
     private let art = ArtView(radius: 12)
     private let shade = CAGradientLayer()
-    private let label = UILabel.make(Theme.label(.caption2, weight: .semibold), Theme.secondary)
+    private let label = UILabel.make(Theme.text(.caption1, weight: .semibold), Theme.secondary)
     private let name = UILabel.make(Theme.text(.body, weight: .semibold), Theme.text, lines: 2)
     private let blurb = UILabel.make(Theme.text(.footnote), UIColor(white: 1, alpha: 0.7), lines: 3)
     private let meta = UILabel.make(Theme.text(.footnote), UIColor(white: 1, alpha: 0.85))
@@ -250,7 +261,7 @@ final class EpisodeLockup: UICollectionViewCell {
 
     func configure(_ e: Episode, watched: Bool, aired: Bool, next: Bool, runtime: Int?) {
         art.show(TMDB.imageURL(e.stillPath, .backdrop), name: nil)
-        label.setCaps("Episode \(e.episodeNumber)", kern: 0.6)
+        label.text = "Episode \(e.episodeNumber)"
         name.text = e.name
         blurb.text = e.overview
         let length = (e.runtime ?? runtime).map { "\($0)m" }
@@ -345,6 +356,9 @@ final class ProviderRowCell: UICollectionViewCell {
         logo.backgroundColor = Theme.surfaceHigh
         chevron.tintColor = Theme.tertiary
         chevron.preferredSymbolConfiguration = .init(pointSize: 13, weight: .semibold)
+        chevron.contentMode = .center
+        chevron.setContentHuggingPriority(.required, for: .horizontal)
+        chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
         rule.backgroundColor = Card.rule
         let text = UIStackView(arrangedSubviews: [name, note])
         text.axis = .vertical
