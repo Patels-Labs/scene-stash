@@ -3,7 +3,7 @@ import UIKit
 /// Your library as shelves: what you're watching, your watchlist, what you've watched, marathons and extras.
 final class LibraryViewController: UIViewController, UICollectionViewDelegate {
     nonisolated private enum Section: Hashable { case stats, watching, watchlist, watched, marathons, extras, empty }
-    nonisolated private enum Extra: Hashable { case year, history, alerts }
+    nonisolated private enum Extra: Hashable { case year, passport, friends, history, alerts }
     nonisolated private enum Item: Hashable {
         case stats, empty
         case watching(Title), watchlist(Title), watched(Title)
@@ -45,7 +45,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDelegate {
         }
         let marathons = Store.shared.marathons().compactMap(\.uuid)
         if !marathons.isEmpty { snap.appendSections([.marathons]); snap.appendItems(marathons.map(Item.marathon)) }
-        if !all.isEmpty { snap.appendSections([.extras]); snap.appendItems([.extra(.year), .extra(.history), .extra(.alerts)]) }
+        if !all.isEmpty { snap.appendSections([.extras]); snap.appendItems([.extra(.year), .extra(.passport), .extra(.friends), .extra(.history), .extra(.alerts)]) }
         snap.reconfigureItems(snap.itemIdentifiers.filter { Set(dataSource.snapshot().itemIdentifiers).contains($0) })
         dataSource.apply(snap, animatingDifferences: view.window != nil && !UIAccessibility.isReduceMotionEnabled)
     }
@@ -96,7 +96,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDelegate {
                 let tracked = Store.shared.tracked(t.id, t.mediaType)
                 let rating = Int(tracked?.rating ?? 0)
                 cell.configure(t, detail: rating > 0 ? "Rated \(rating)" : tracked?.watchedAt?.formatted(.dateTime.month(.abbreviated).year()),
-                               tint: rating > 0 ? Theme.accent : nil)
+                               tint: rating > 0 ? Theme.accent : nil, badge: PosterLockup.timesSeen(tracked))
             default: break
             }
         }
@@ -143,6 +143,14 @@ final class LibraryViewController: UIViewController, UICollectionViewDelegate {
             let year = Calendar.current.component(.year, from: .now)
             let films = Store.shared.all(.seen).filter { $0.mediaType == .movie && $0.watchedAt.map { Calendar.current.component(.year, from: $0) == year } ?? false }.count
             return .init(backdrop: TMDB.imageURL(recent?.backdropPath, .backdrop), title: "Year in Review", meta: "\(year) so far · \(films) films")
+        case .passport:
+            let film = Store.shared.all(.seen).dropFirst(2).first ?? Store.shared.all(.seen).last
+            return .init(backdrop: TMDB.imageURL(film?.backdropPath, .backdrop), title: "Cinema Passport", meta: "Stamps for where and when your films are from")
+        case .friends:
+            let rec = Store.shared.recommendations().first
+            let (hits, rated) = Store.shared.hitRate()
+            return .init(backdrop: TMDB.imageURL(rec?.backdropPath ?? Store.shared.all(.watchlist).first?.backdropPath, .backdrop), title: "Pass It On",
+                         meta: rated > 0 ? "Hit rate \(hits) of \(rated)" : "Recommend films to friends")
         case .history:
             return .init(backdrop: TMDB.imageURL(Store.shared.all(.seen).dropFirst().first?.backdropPath, .backdrop), title: "History", meta: "Everything you've watched, by date")
         case .alerts:
@@ -172,6 +180,8 @@ final class LibraryViewController: UIViewController, UICollectionViewDelegate {
             guard let m = Store.shared.marathons().first(where: { $0.uuid == uuid }) else { return }
             withPass { navigationController?.pushViewController(MarathonPlannerViewController(marathon: m), animated: true) }
         case .extra(.year): withPass { present(YearViewController(), animated: true) }
+        case .extra(.friends): navigationController?.pushViewController(PassItOnViewController(), animated: true)
+        case .extra(.passport): withPass { navigationController?.pushViewController(PassportViewController(), animated: true) }
         case .extra(.history): withPass { navigationController?.pushViewController(StubBookViewController(), animated: true) }
         case .extra(.alerts): present(UINavigationController(rootViewController: SettingsViewController()), animated: true)
         case .stats, .empty: break
@@ -186,9 +196,11 @@ final class LibraryViewController: UIViewController, UICollectionViewDelegate {
     }
 }
 
-/// Everything on one shelf, as a grid.
+/// Everything on one shelf, as a grid. Or any list of titles, like the films behind a passport stamp.
 final class LibraryListViewController: UIViewController, UICollectionViewDelegate {
     private let status: TrackStatus
+    private let heading: String
+    private let titles: () -> [Title]
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout { _, _ in
         let item = NSCollectionLayoutItem(layoutSize: .init(widthDimension: .fractionalWidth(1 / 3), heightDimension: .estimated(220)))
         item.contentInsets = .init(top: 0, leading: Shelf.gap / 2, bottom: 0, trailing: Shelf.gap / 2)
@@ -202,13 +214,23 @@ final class LibraryListViewController: UIViewController, UICollectionViewDelegat
 
     init(status: TrackStatus) {
         self.status = status
+        heading = status.label
+        titles = { Store.shared.all(status).map(\.title) }
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    /// Films you've watched, under a heading of their own.
+    init(heading: String, watched: [Title]) {
+        status = .seen
+        self.heading = heading
+        titles = { watched }
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = status.label
+        title = heading
         installBackdrop()
         navigationItem.largeTitleDisplayMode = .always
         collectionView.backgroundColor = .clear
@@ -219,7 +241,7 @@ final class LibraryListViewController: UIViewController, UICollectionViewDelegat
             let tracked = Store.shared.tracked(t.id, t.mediaType)
             let rating = Int(tracked?.rating ?? 0)
             let detail = status == .seen && rating > 0 ? "Rated \(rating)" : t.year
-            cell.configure(t, caption: t.name, detail: detail, tint: status == .seen && rating > 0 ? Theme.accent : nil)
+            cell.configure(t, caption: t.name, detail: detail, tint: status == .seen && rating > 0 ? Theme.accent : nil, badge: PosterLockup.timesSeen(tracked))
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { cv, ip, t in
             cv.dequeueConfiguredReusableCell(using: reg, for: ip, item: t)
@@ -231,7 +253,7 @@ final class LibraryListViewController: UIViewController, UICollectionViewDelegat
     @objc private func reload() {
         var snap = NSDiffableDataSourceSnapshot<Int, Title>()
         snap.appendSections([0])
-        snap.appendItems(Store.shared.all(status).map(\.title))
+        snap.appendItems(titles())
         dataSource.apply(snap, animatingDifferences: view.window != nil)
     }
 

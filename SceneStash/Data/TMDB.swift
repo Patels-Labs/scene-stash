@@ -2,6 +2,8 @@ import Foundation
 
 nonisolated enum MediaType: String, Codable, Hashable, Sendable {
     case movie, tv, person
+    /// A film series. Only used for its page and artwork; TMDB's paths for it start "collection/".
+    case collection
 }
 
 /// A movie or show as it appears in lists, search and trending.
@@ -141,7 +143,7 @@ nonisolated struct TitleDetail: Decodable, Sendable {
     let midCredits: Bool
     let afterCredits: Bool
     /// The film series this belongs to, for planning a marathon of the lot.
-    let collection: (id: Int, name: String)?
+    let collection: (id: Int, name: String, backdrop: String?)?
 
     var year: String? { date.map { String($0.prefix(4)) } }
     /// Seasons that count toward progress (specials excluded).
@@ -156,7 +158,7 @@ nonisolated struct TitleDetail: Decodable, Sendable {
     }
     private struct Crew: Decodable { let name: String; let job: String? }
     private struct Credits: Decodable { let cast: [CastMember]; let crew: [Crew]? }
-    private struct Series: Decodable { let id: Int; let name: String }
+    private struct Series: Decodable { let id: Int; let name: String; let backdropPath: String? }
     private struct Providers: Decodable { let results: [String: RegionProviders] }
     /// Films nest keywords under `keywords`, shows under `results`.
     private struct Keywords: Decodable {
@@ -205,7 +207,7 @@ nonisolated struct TitleDetail: Decodable, Sendable {
         providers = try c.decodeIfPresent(Providers.self, forKey: .watchProviders)?.results ?? [:]
         recommendations = (try? c.decodeIfPresent(Page<Title>.self, forKey: .recommendations)?.results) ?? []
         let tags = (try? c.decodeIfPresent(Keywords.self, forKey: .keywords)).flatMap { $0?.keywords ?? $0?.results } ?? []
-        collection = (try? c.decodeIfPresent(Series.self, forKey: .belongsToCollection)).flatMap { $0 }.map { ($0.id, $0.name) }
+        collection = (try? c.decodeIfPresent(Series.self, forKey: .belongsToCollection)).flatMap { $0 }.map { ($0.id, $0.name, $0.backdropPath) }
         midCredits = tags.contains { $0.id == 179431 } // "duringcreditsstinger"
         afterCredits = tags.contains { $0.id == 179430 } // "aftercreditsstinger"
     }
@@ -309,11 +311,36 @@ final class TMDB {
             .filter { seen.insert($0.providerId).inserted }
     }
 
-    /// A film series' parts in release order, unreleased ones left out.
-    func collection(_ id: Int) async throws -> [Title] {
-        struct Collection: Decodable { let parts: [Title] }
-        let c: Collection = try await get("collection/\(id)")
-        return c.parts.filter { DateText.isPast($0.date) }.sorted { ($0.date ?? "") < ($1.date ?? "") }
+    nonisolated struct Series: Decodable, Sendable {
+        let name: String
+        let overview: String?
+        let posterPath: String?
+        let backdropPath: String?
+        let parts: [Title]
+    }
+
+    /// A film series, its parts in release order with unreleased ones left out.
+    func series(_ id: Int) async throws -> Series {
+        let s: Series = try await get("collection/\(id)")
+        return Series(name: s.name, overview: s.overview, posterPath: s.posterPath, backdropPath: s.backdropPath,
+                      parts: s.parts.filter { DateText.isPast($0.date) }.sorted { ($0.date ?? "") < ($1.date ?? "") })
+    }
+
+    /// What a film adds to the passport: its year, countries, director and genres.
+    func fact(_ id: Int) async -> FilmFact? {
+        struct Named: Decodable { let name: String }
+        struct Crew: Decodable { let name: String; let job: String? }
+        struct Credits: Decodable { let crew: [Crew] }
+        struct Raw: Decodable { let title: String; let releaseDate: String?; let productionCountries: [Named]?; let genres: [Named]?; let credits: Credits? }
+        guard let r: Raw = try? await get("movie/\(id)", ["append_to_response": "credits"]) else { return nil }
+        return FilmFact(id: id, name: r.title, year: r.releaseDate.flatMap { Int($0.prefix(4)) }, countries: r.productionCountries?.map(\.name) ?? [],
+                        director: r.credits?.crew.first { $0.job == "Director" }?.name, genres: r.genres?.map(\.name) ?? [])
+    }
+
+    /// Just a film's running time, without everything else on its page.
+    func runtime(_ id: Int) async -> Int? {
+        let d: TitleDetail? = try? await get("movie/\(id)")
+        return d?.runtime
     }
 
     /// Artwork for the top of a title's page: its logo in English (or with no text), and a poster with no

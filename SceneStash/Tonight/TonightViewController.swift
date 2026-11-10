@@ -32,8 +32,8 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             }
         }
     }
-    nonisolated private enum Section: Hashable { case hero, night, watchlist, upcoming, trending }
-    nonisolated private enum Item: Hashable { case hero, night(String), watchlist(Title), upcoming(Upcoming), trending(Title) }
+    nonisolated private enum Section: Hashable { case hero, night, friends, watchlist, upcoming, trending }
+    nonisolated private enum Item: Hashable { case hero, night(String), friend(String), watchlist(Title), upcoming(Upcoming), trending(Title) }
 
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
@@ -331,6 +331,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
                 return section
             case .night: return Shelf.feature(height: (env.container.effectiveContentSize.width - Shelf.margin * 2) * 9 / 16)
             case .upcoming: return Shelf.posters(captions: 2)
+            case .friends: return Shelf.wides(captions: 2)
             case .watchlist, .trending: return Shelf.posters()
             }
         }
@@ -346,6 +347,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
                 if let slot = self?.programme.first(where: { $0.title == title }), case .outing = slot { self?.primary(slot) } else { self?.openDetail(title) { nil } }
             }
             cell.onSettings = { [weak self] in self?.present(UINavigationController(rootViewController: SettingsViewController()), animated: true) }
+            cell.onTime = { [weak self] in self?.timeFit() }
             cell.show(heroPages, suggestion: trending.first)
         }
         let nightReg = UICollectionView.CellRegistration<WideLockup, Item> { cell, _, item in
@@ -354,6 +356,13 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             let time = (night.showtime ?? .now).formatted(date: .omitted, time: .shortened)
             cell.configure(.init(backdrop: TMDB.imageURL(night.backdropPath ?? night.posterPath, .backdrop), title: night.name ?? "",
                                  meta: "\(when) · Showtime \(time)" + (night.cinema.map { " · \($0)" } ?? ""), badge: night.status().label))
+        }
+        let friendReg = UICollectionView.CellRegistration<WideLockup, Item> { cell, _, item in
+            guard case .friend(let uuid) = item, let rec = Store.shared.recommendations().first(where: { $0.uuid == uuid }) else { return }
+            let from = rec.authorName ?? "a friend"
+            cell.configure(.init(backdrop: TMDB.imageURL(rec.backdropPath ?? rec.posterPath, .backdrop), title: rec.name ?? "",
+                                 badge: "From \(from)" + (rec.senderRating > 0 ? " · \(rec.senderRating)" : ""),
+                                 caption: rec.note.map { "“\($0)”" } ?? "Passed on by \(from)", detail: rec.createdAt?.formatted(.relative(presentation: .named))))
         }
         let posterReg = UICollectionView.CellRegistration<PosterLockup, Item> { cell, _, item in
             switch item {
@@ -365,6 +374,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         let headerReg = UICollectionView.SupplementaryRegistration<ShelfHeader>(elementKind: ShelfHeader.kind) { [unowned self] header, _, indexPath in
             switch dataSource.sectionIdentifier(for: indexPath.section) {
             case .night: header.configure("Movie Nights") { [weak self] in self?.openTab("nights") }
+            case .friends: header.configure("From Friends") { [weak self] in self?.navigationController?.pushViewController(PassItOnViewController(), animated: true) }
             case .watchlist: header.configure("Your Watchlist") { [weak self] in self?.openTab("stash") }
             case .upcoming: header.configure("Coming Soon")
             case .trending: header.configure("Everyone's Watching")
@@ -375,6 +385,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             switch item {
             case .hero: cv.dequeueConfiguredReusableCell(using: heroReg, for: indexPath, item: item)
             case .night: cv.dequeueConfiguredReusableCell(using: nightReg, for: indexPath, item: item)
+            case .friend: cv.dequeueConfiguredReusableCell(using: friendReg, for: indexPath, item: item)
             case .upcoming, .trending, .watchlist: cv.dequeueConfiguredReusableCell(using: posterReg, for: indexPath, item: item)
             }
         }
@@ -390,6 +401,8 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         if let next = Store.shared.nights().first(where: { $0.status() != .creditsRolled && $0.uuid != tonight }), let uuid = next.uuid {
             snap.appendSections([.night]); snap.appendItems([.night(uuid)])
         }
+        let passed = Store.shared.fromFriends().compactMap(\.uuid)
+        if !passed.isEmpty { snap.appendSections([.friends]); snap.appendItems(passed.prefix(10).map(Item.friend)) }
         let picked = Set(programme.compactMap(\.title))
         let ready = Store.shared.all(.watchlist).map(\.title).filter { !picked.contains($0) && ($0.date.map { DateText.isPast($0) } ?? true) }
         if !ready.isEmpty { snap.appendSections([.watchlist]); snap.appendItems(ready.map(Item.watchlist)) }
@@ -417,6 +430,36 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         }
     }
 
+    /// I've Got…: everything you could watch next, for the sheet to fit to the time you have.
+    private func timeFit() {
+        Haptics.tap()
+        var options: [TimeFitViewController.Option] = []
+        for f in Store.shared.all(.watching) where f.mediaType == .movie && f.runtime > 0 {
+            options.append(.init(title: f.title, kind: .finish, pieces: [max(Int(f.runtime) - Int(f.position) / 60, 1)]))
+        }
+        for u in upNext {
+            // Later episodes are guessed at the show's usual length.
+            let each = u.runtime ?? 45
+            options.append(.init(title: u.show, kind: .episodes(u.episode), pieces: [max(each - u.position / 60, 1)] + Array(repeating: each, count: min(max(u.remaining - 1, 0), 12))))
+        }
+        for f in Store.shared.all(.watchlist) where f.mediaType == .movie && f.runtime > 0 && (f.releaseDate.map { DateText.isPast($0) } ?? true) {
+            options.append(.init(title: f.title, kind: .watchlist, pieces: [Int(f.runtime)]))
+        }
+        let sheet = TimeFitViewController(options: options, untilLightsUp: Int(lightsUp.timeIntervalSinceNow / 60)) { [weak self] option in
+            guard let self else { return }
+            if case .episodes(let e) = option.kind {
+                navigationController?.pushViewController(EpisodeViewController(show: option.title, episode: e), animated: true)
+            } else {
+                openDetail(option.title) { nil }
+            }
+        }
+        let nav = UINavigationController(rootViewController: sheet)
+        nav.navigationBar.prefersLargeTitles = true
+        nav.sheetPresentationController?.detents = [.medium(), .large()]
+        nav.sheetPresentationController?.prefersGrabberVisible = true
+        present(nav, animated: true)
+    }
+
     private func openTab(_ identifier: String) {
         guard let tabs = tabBarController else { return }
         tabs.selectedTab = tabs.tabs.first { $0.identifier == identifier }
@@ -435,6 +478,9 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             navigationController?.pushViewController(NightViewController(night: night), animated: true)
             return
         case .upcoming(let u): title = u.title
+        case .friend(let uuid):
+            guard let rec = Store.shared.recommendations().first(where: { $0.uuid == uuid }) else { return }
+            title = rec.title
         case .trending(let t), .watchlist(let t): title = t
         case .hero: return
         }
@@ -465,11 +511,13 @@ final class TonightHeroCell: UICollectionViewCell, UICollectionViewDelegate, UIP
     var onDone: ((TonightViewController.Slot) -> Void)?
     var onOpen: ((Title) -> Void)?
     var onSettings: (() -> Void)?
+    var onTime: (() -> Void)?
     /// False while another screen is in front.
     var onScreen = true { didSet { updateTimer() } }
     let heading = UILabel.make(Theme.text(.largeTitle, weight: .bold))
 
     private let settings = CapsuleButton.circle("gearshape", label: "Settings")
+    private let time = CapsuleButton.circle("hourglass", label: "I've got…")
     private let control = UIPageControl()
     private let timer = UIPageControlTimerProgress(preferredDuration: 8)
     private let pager: UICollectionView
@@ -519,17 +567,20 @@ final class TonightHeroCell: UICollectionViewCell, UICollectionViewDelegate, UIP
         // Pages that move by themselves are out for anyone who's asked for less motion or is using VoiceOver.
         if !UIAccessibility.isReduceMotionEnabled && !UIAccessibility.isVoiceOverRunning { control.progress = timer }
 
-        [heading, settings, control].forEach { contentView.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        [heading, time, settings, control].forEach { contentView.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
         NSLayoutConstraint.activate([
             heading.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 62),
             heading.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: Shelf.margin),
-            heading.trailingAnchor.constraint(lessThanOrEqualTo: settings.leadingAnchor, constant: -12),
+            heading.trailingAnchor.constraint(lessThanOrEqualTo: time.leadingAnchor, constant: -12),
+            time.centerYAnchor.constraint(equalTo: heading.centerYAnchor),
+            time.trailingAnchor.constraint(equalTo: settings.leadingAnchor, constant: -10),
             settings.centerYAnchor.constraint(equalTo: heading.centerYAnchor),
             settings.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -Shelf.margin),
             control.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             control.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10),
         ])
         settings.addAction(UIAction { [weak self] _ in self?.onSettings?() }, for: .primaryActionTriggered)
+        time.addAction(UIAction { [weak self] _ in self?.onTime?() }, for: .primaryActionTriggered)
     }
     required init?(coder: NSCoder) { fatalError() }
 

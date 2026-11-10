@@ -21,6 +21,7 @@ final class MovieNight: NSManagedObject {
     @NSManaged var bookedBy: String?
     @NSManaged var createdAt: Date?
     @NSManaged var notes: Set<NightNote>?
+    @NSManaged var photos: Set<NightPhoto>?
 
     var title: Title {
         Title(id: Int(tmdbID), mediaType: .movie, name: name ?? "", posterPath: posterPath, backdropPath: backdropPath, date: nil)
@@ -49,6 +50,17 @@ final class NightNote: NSManagedObject {
     @NSManaged var authorName: String?
     @NSManaged var text: String?
     @NSManaged var rating: Int16
+    @NSManaged var createdAt: Date?
+    @NSManaged var night: MovieNight?
+}
+
+/// A photo from the night, added by anyone going. Synced with the night's share as a CloudKit asset.
+@objc(NightPhoto)
+final class NightPhoto: NSManagedObject {
+    @NSManaged var uuid: String?
+    @NSManaged var authorID: String?
+    @NSManaged var authorName: String?
+    @NSManaged var imageData: Data?
     @NSManaged var createdAt: Date?
     @NSManaged var night: MovieNight?
 }
@@ -85,6 +97,24 @@ extension Store {
         night.backdropPath = title.backdropPath
         night.runtime = Int32(runtime ?? 0)
         return night
+    }
+
+    /// Photos live in the night's store, like notes, so everyone on it gets them.
+    func addPhoto(_ data: Data, to night: MovieNight) {
+        let photo = NightPhoto(context: context)
+        if let store = night.objectID.persistentStore ?? privateStore { context.assign(photo, to: store) }
+        photo.uuid = UUID().uuidString
+        photo.authorID = Prefs.me
+        photo.authorName = myName(on: night)
+        photo.createdAt = .now
+        photo.imageData = data
+        photo.night = night
+        save()
+    }
+
+    func delete(_ object: NSManagedObject) {
+        context.delete(object)
+        save()
     }
 
     func delete(_ night: MovieNight) {
@@ -149,7 +179,11 @@ extension Store {
                 if current != .seen && current != .watching { track(night.title, status: .watching, runtime: runtime) }
             case .creditsRolled where !done.contains(uuid):
                 done.insert(uuid)
-                if current != .seen { track(night.title, status: .seen, runtime: runtime).watchedAt = night.lightsUp }
+                if current == .seen {
+                    addViewing(night.title, date: night.lightsUp ?? now, place: night.cinema)
+                } else {
+                    track(night.title, status: .seen, runtime: runtime).watchedAt = night.lightsUp
+                }
             default: break
             }
         }
@@ -175,16 +209,17 @@ extension Store {
 
     var cloudContainer: CKContainer { CKContainer(identifier: Self.containerID) }
 
-    func share(for night: MovieNight) -> CKShare? {
-        guard Self.cloudEnabled, !night.objectID.isTemporaryID else { return nil }
-        return (try? container.fetchShares(matching: [night.objectID]))?[night.objectID]
+    /// The share a night (or a friend) lives in, once it's been shared.
+    func share(for object: NSManagedObject) -> CKShare? {
+        guard Self.cloudEnabled, !object.objectID.isTemporaryID else { return nil }
+        return (try? container.fetchShares(matching: [object.objectID]))?[object.objectID]
     }
 
-    /// Moves the night into its own share zone and returns the share for the invite sheet.
-    func makeShare(for id: NSManagedObjectID) async throws -> CKShare {
-        guard let night = try context.existingObject(with: id) as? MovieNight else { throw CKError(.unknownItem) }
-        let (_, share, _) = try await container.share([night], to: nil)
-        share[CKShare.SystemFieldKey.title] = "Movie night: \(night.name ?? "a film")"
+    /// Moves the object into its own share zone and returns the share for the invite sheet.
+    func makeShare(for id: NSManagedObjectID, title: String) async throws -> CKShare {
+        let object = try context.existingObject(with: id)
+        let (_, share, _) = try await container.share([object], to: nil)
+        share[CKShare.SystemFieldKey.title] = title
         share.publicPermission = .none
         return share
     }
@@ -213,8 +248,8 @@ extension Store {
     }
 
     /// Your name as friends on this night see it, for notes and "booked by".
-    func myName(on night: MovieNight) -> String? {
-        guard let me = share(for: night)?.currentUserParticipant?.userIdentity.nameComponents else { return nil }
+    func myName(on object: NSManagedObject) -> String? {
+        guard let me = share(for: object)?.currentUserParticipant?.userIdentity.nameComponents else { return nil }
         let formatter = PersonNameComponentsFormatter()
         formatter.style = .short
         return formatter.string(from: me).isEmpty ? nil : formatter.string(from: me)
