@@ -351,9 +351,14 @@ final class SeasonHeader: UICollectionReusableView {
     required init?(coder: NSCoder) { fatalError() }
 
     /// `states`: per aired-or-not episode, 2 watched, 1 up next, 0 not yet.
-    func configure(season: Int, menu: UIMenu, states: [Int]) {
-        picker.configuration?.title = "Season \(season)"
+    func configure(season: Int, menu: UIMenu, states: [Int]) { configure(title: "Season \(season)", menu: menu, states: states) }
+
+    /// Any heading over a row of bars; with no menu it's just a title.
+    func configure(title: String, menu: UIMenu?, states: [Int]) {
+        picker.configuration?.title = title
         picker.menu = menu
+        picker.configuration?.image = menu == nil ? nil : UIImage(systemName: "chevron.up.chevron.down")?.withTintColor(Theme.secondary, renderingMode: .alwaysOriginal)
+        picker.isUserInteractionEnabled = menu != nil
         let watched = states.filter { $0 == 2 }.count
         count.text = states.isEmpty ? nil : "\(watched) of \(states.count) watched"
         bars.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -366,7 +371,7 @@ final class SeasonHeader: UICollectionReusableView {
             bars.addArrangedSubview(bar)
         }
         bars.isHidden = shown.isEmpty
-        picker.accessibilityLabel = "Season \(season), \(count.text ?? ""). Choose season"
+        picker.accessibilityLabel = "\(title), \(count.text ?? "")" + (menu == nil ? "" : ". Choose season")
     }
 }
 

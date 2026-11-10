@@ -3,9 +3,9 @@ import UIKit
 /// A title's page, Apple TV-style: tall art with its logo and the main buttons, then what you need to know,
 /// and shelves of episodes, cast and more.
 final class DetailViewController: UIViewController, UICollectionViewDelegate {
-    nonisolated private enum Section: Hashable { case hero, progress, credits, rating, viewings, episodes, providers, cast, more }
+    nonisolated private enum Section: Hashable { case hero, progress, credits, rating, viewings, episodes, series, providers, cast, more }
     nonisolated private enum Item: Hashable {
-        case hero, progress, credits, rating, viewings
+        case hero, progress, credits, rating, viewings, series
         case episode(Episode), provider(Provider), cast(CastMember), title(Title)
     }
 
@@ -230,13 +230,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
     }
 
     private func moreMenu() -> [UIMenuElement] {
-        var items: [UIMenuElement] = [UIAction(title: "Share", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in self?.share() }]
-        if item.mediaType == .movie, detail?.collection != nil {
-            items.append(UIAction(title: "Plan a Marathon of the Series", image: UIImage(systemName: "calendar")) { [weak self] _ in
-                self?.withPass { self?.planMarathon() }
-            })
-        }
-        return items
+        [UIAction(title: "Share", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in self?.share() }]
     }
 
     // MARK: Actions
@@ -280,29 +274,11 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         present(UINavigationController(rootViewController: form), animated: true)
     }
 
-    /// A film series becomes a marathon of every released part; a show, the rest of the selected season.
+    /// A show's marathon is the rest of the selected season. A film series plans its own from its page.
     private func planMarathon() {
         guard let detail else { return }
         Haptics.tap()
-        if item.mediaType == .movie, let series = detail.collection {
-            Task {
-                let parts = (try? await TMDB.shared.collection(series.id)) ?? []
-                var runtimes: [Int: Int] = [:]
-                await withTaskGroup(of: (Int, Int?).self) { group in
-                    for part in parts { group.addTask { (part.id, try? await TMDB.shared.detail(part.id, .movie).runtime) } }
-                    for await (id, runtime) in group { runtimes[id] = runtime }
-                }
-                // ponytail: unwatched parts only; rewatch marathons would need per-marathon progress.
-                let pieces = parts.filter { Store.shared.tracked($0.id, .movie)?.status != .seen }
-                    .map { Piece(id: $0.id, isEpisode: false, name: $0.name, detail: nil, poster: $0.posterPath, backdrop: $0.backdropPath, minutes: runtimes[$0.id] ?? 120) }
-                guard !pieces.isEmpty else {
-                    alert("You've watched them all", "Every film in \(series.name) is already in Watched.")
-                    return
-                }
-                let name = series.name.replacingOccurrences(of: " Collection", with: "")
-                navigationController?.pushViewController(MarathonPlannerViewController(name: name, pieces: pieces), animated: true)
-            }
-        } else if let season = selectedSeason {
+        if let season = selectedSeason {
             let episodes = (seasonEpisodes[season] ?? []).filter {
                 DateText.isPast($0.airDate) && !watched.contains(EpisodeKey(season: $0.seasonNumber, episode: $0.episodeNumber))
             }
@@ -380,6 +356,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             switch section {
             case .hero: return single(estimated: 860, insets: 0, header: false)
             case .progress: return single(estimated: 140, insets: Shelf.margin, header: true)
+            case .series: return single(estimated: 200, insets: Shelf.margin, header: true)
             case .credits: return single(estimated: 70, insets: Shelf.margin, header: false)
             case .rating: return single(estimated: 44, insets: 0, header: true)
             case .viewings: return single(estimated: 120, insets: Shelf.margin, header: true)
@@ -433,6 +410,11 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
                 self?.present(nav, animated: true)
             }
         }
+        let seriesReg = UICollectionView.CellRegistration<WideLockup, Item> { [unowned self] cell, _, _ in
+            guard let series = detail?.collection else { return }
+            cell.configure(.init(backdrop: TMDB.imageURL(series.backdrop, .backdrop), title: series.name.replacingOccurrences(of: " Collection", with: ""),
+                                 meta: "Every film, in order", accessibility: "\(series.name). Every film, in order"))
+        }
         let episodeReg = UICollectionView.CellRegistration<EpisodeLockup, Item> { [unowned self] cell, _, item in
             guard case .episode(let e) = item else { return }
             let key = EpisodeKey(season: e.seasonNumber, episode: e.episodeNumber)
@@ -459,6 +441,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             case .progress: header.configure(live == nil ? "Where You Are" : "Now Showing")
             case .rating: header.configure("Your Rating")
             case .viewings: header.configure("Your Viewings")
+            case .series: header.configure("Part of a Series")
             case .providers: header.configure("How to Watch")
             case .cast: header.configure("Cast & Crew")
             case .more: header.configure("More Like This")
@@ -476,6 +459,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             case .credits: cv.dequeueConfiguredReusableCell(using: creditsReg, for: indexPath, item: item)
             case .rating: cv.dequeueConfiguredReusableCell(using: ratingReg, for: indexPath, item: item)
             case .viewings: cv.dequeueConfiguredReusableCell(using: viewingsReg, for: indexPath, item: item)
+            case .series: cv.dequeueConfiguredReusableCell(using: seriesReg, for: indexPath, item: item)
             case .episode: cv.dequeueConfiguredReusableCell(using: episodeReg, for: indexPath, item: item)
             case .provider: cv.dequeueConfiguredReusableCell(using: providerReg, for: indexPath, item: item)
             case .cast: cv.dequeueConfiguredReusableCell(using: castReg, for: indexPath, item: item)
@@ -518,6 +502,9 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         if let n = selectedSeason, let episodes = seasonEpisodes[n], !episodes.isEmpty {
             snap.appendSections([.episodes]); snap.appendItems(episodes.map(Item.episode))
         }
+        if item.mediaType == .movie, detail?.collection != nil {
+            snap.appendSections([.series]); snap.appendItems([.series])
+        }
         if let region = detail?.providers[Prefs.region], let flat = region.flatrate, !flat.isEmpty {
             let mine = Prefs.services
             snap.appendSections([.providers])
@@ -542,6 +529,14 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
                 self?.dataSource.indexPath(for: selected).flatMap { collectionView.cellForItem(at: $0) }
             }
             navigationController?.pushViewController(page, animated: true)
+        case .series:
+            guard let series = detail?.collection else { return }
+            Haptics.tap()
+            let page = CollectionViewController(id: series.id, name: series.name, backdrop: series.backdrop)
+            page.preferredTransition = .zoom { [weak self] _ in
+                self?.dataSource.indexPath(for: selected).flatMap { collectionView.cellForItem(at: $0) }
+            }
+            navigationController?.pushViewController(page, animated: true)
         case .provider(let p):
             if let url = p.searchURL(for: item.name) ?? detail?.providers[Prefs.region]?.link.flatMap(URL.init(string:)) { UIApplication.shared.open(url) }
         case .title(let t):
@@ -554,7 +549,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
 
     func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
         switch dataSource.itemIdentifier(for: indexPath) {
-        case .episode, .provider, .title: true
+        case .episode, .provider, .title, .series: true
         default: false
         }
     }
