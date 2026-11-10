@@ -346,6 +346,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
                 if let slot = self?.programme.first(where: { $0.title == title }), case .outing = slot { self?.primary(slot) } else { self?.openDetail(title) { nil } }
             }
             cell.onSettings = { [weak self] in self?.present(UINavigationController(rootViewController: SettingsViewController()), animated: true) }
+            cell.onTime = { [weak self] in self?.timeFit() }
             cell.show(heroPages, suggestion: trending.first)
         }
         let nightReg = UICollectionView.CellRegistration<WideLockup, Item> { cell, _, item in
@@ -417,6 +418,36 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         }
     }
 
+    /// I've Got…: everything you could watch next, for the sheet to fit to the time you have.
+    private func timeFit() {
+        Haptics.tap()
+        var options: [TimeFitViewController.Option] = []
+        for f in Store.shared.all(.watching) where f.mediaType == .movie && f.runtime > 0 {
+            options.append(.init(title: f.title, kind: .finish, pieces: [max(Int(f.runtime) - Int(f.position) / 60, 1)]))
+        }
+        for u in upNext {
+            // Later episodes are guessed at the show's usual length.
+            let each = u.runtime ?? 45
+            options.append(.init(title: u.show, kind: .episodes(u.episode), pieces: [max(each - u.position / 60, 1)] + Array(repeating: each, count: min(max(u.remaining - 1, 0), 12))))
+        }
+        for f in Store.shared.all(.watchlist) where f.mediaType == .movie && f.runtime > 0 && (f.releaseDate.map { DateText.isPast($0) } ?? true) {
+            options.append(.init(title: f.title, kind: .watchlist, pieces: [Int(f.runtime)]))
+        }
+        let sheet = TimeFitViewController(options: options, untilLightsUp: Int(lightsUp.timeIntervalSinceNow / 60)) { [weak self] option in
+            guard let self else { return }
+            if case .episodes(let e) = option.kind {
+                navigationController?.pushViewController(EpisodeViewController(show: option.title, episode: e), animated: true)
+            } else {
+                openDetail(option.title) { nil }
+            }
+        }
+        let nav = UINavigationController(rootViewController: sheet)
+        nav.navigationBar.prefersLargeTitles = true
+        nav.sheetPresentationController?.detents = [.medium(), .large()]
+        nav.sheetPresentationController?.prefersGrabberVisible = true
+        present(nav, animated: true)
+    }
+
     private func openTab(_ identifier: String) {
         guard let tabs = tabBarController else { return }
         tabs.selectedTab = tabs.tabs.first { $0.identifier == identifier }
@@ -465,11 +496,13 @@ final class TonightHeroCell: UICollectionViewCell, UICollectionViewDelegate, UIP
     var onDone: ((TonightViewController.Slot) -> Void)?
     var onOpen: ((Title) -> Void)?
     var onSettings: (() -> Void)?
+    var onTime: (() -> Void)?
     /// False while another screen is in front.
     var onScreen = true { didSet { updateTimer() } }
     let heading = UILabel.make(Theme.text(.largeTitle, weight: .bold))
 
     private let settings = CapsuleButton.circle("gearshape", label: "Settings")
+    private let time = CapsuleButton.circle("hourglass", label: "I've got…")
     private let control = UIPageControl()
     private let timer = UIPageControlTimerProgress(preferredDuration: 8)
     private let pager: UICollectionView
@@ -519,17 +552,20 @@ final class TonightHeroCell: UICollectionViewCell, UICollectionViewDelegate, UIP
         // Pages that move by themselves are out for anyone who's asked for less motion or is using VoiceOver.
         if !UIAccessibility.isReduceMotionEnabled && !UIAccessibility.isVoiceOverRunning { control.progress = timer }
 
-        [heading, settings, control].forEach { contentView.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        [heading, time, settings, control].forEach { contentView.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
         NSLayoutConstraint.activate([
             heading.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 62),
             heading.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: Shelf.margin),
-            heading.trailingAnchor.constraint(lessThanOrEqualTo: settings.leadingAnchor, constant: -12),
+            heading.trailingAnchor.constraint(lessThanOrEqualTo: time.leadingAnchor, constant: -12),
+            time.centerYAnchor.constraint(equalTo: heading.centerYAnchor),
+            time.trailingAnchor.constraint(equalTo: settings.leadingAnchor, constant: -10),
             settings.centerYAnchor.constraint(equalTo: heading.centerYAnchor),
             settings.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -Shelf.margin),
             control.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             control.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10),
         ])
         settings.addAction(UIAction { [weak self] _ in self?.onSettings?() }, for: .primaryActionTriggered)
+        time.addAction(UIAction { [weak self] _ in self?.onTime?() }, for: .primaryActionTriggered)
     }
     required init?(coder: NSCoder) { fatalError() }
 
