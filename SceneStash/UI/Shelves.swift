@@ -140,6 +140,7 @@ final class CaptionStack: UIStackView {
 final class PosterLockup: UICollectionViewCell {
     let art = ArtView(radius: 10)
     let captions = CaptionStack()
+    private let badge = GlassLabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -156,16 +157,30 @@ final class PosterLockup: UICollectionViewCell {
             stack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor),
             art.heightAnchor.constraint(equalTo: art.widthAnchor, multiplier: 1.5),
         ])
+        art.addSubview(badge)
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            badge.topAnchor.constraint(equalTo: art.topAnchor, constant: 6),
+            badge.trailingAnchor.constraint(equalTo: art.trailingAnchor, constant: -6),
+        ])
         isAccessibilityElement = true
         accessibilityTraits = .button
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(_ title: Title, caption: String? = nil, detail: String? = nil, tint: UIColor? = nil) {
+    func configure(_ title: Title, caption: String? = nil, detail: String? = nil, tint: UIColor? = nil, badge: String? = nil) {
         art.show(TMDB.imageURL(title.posterPath, .poster), name: title.name)
         captions.set(caption, detail, tint: tint)
         captions.isHidden = caption == nil && detail == nil
-        accessibilityLabel = [title.name, caption, detail].compactMap { $0 }.joined(separator: ", ")
+        self.badge.text = badge
+        self.badge.isHidden = badge == nil
+        accessibilityLabel = [title.name, caption, detail, badge.map { "seen \($0.dropFirst()) times" }].compactMap { $0 }.joined(separator: ", ")
+    }
+
+    /// "×3" for a film you've seen three times.
+    static func timesSeen(_ tracked: Tracked?) -> String? {
+        guard let n = tracked?.viewings.count, n > 1 else { return nil }
+        return "×\(n)"
     }
 
     override var isHighlighted: Bool { didSet { Spring.press(self, isHighlighted, scale: 0.96) } }

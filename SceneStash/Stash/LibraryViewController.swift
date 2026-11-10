@@ -96,7 +96,7 @@ final class LibraryViewController: UIViewController, UICollectionViewDelegate {
                 let tracked = Store.shared.tracked(t.id, t.mediaType)
                 let rating = Int(tracked?.rating ?? 0)
                 cell.configure(t, detail: rating > 0 ? "Rated \(rating)" : tracked?.watchedAt?.formatted(.dateTime.month(.abbreviated).year()),
-                               tint: rating > 0 ? Theme.accent : nil)
+                               tint: rating > 0 ? Theme.accent : nil, badge: PosterLockup.timesSeen(tracked))
             default: break
             }
         }
@@ -219,7 +219,7 @@ final class LibraryListViewController: UIViewController, UICollectionViewDelegat
             let tracked = Store.shared.tracked(t.id, t.mediaType)
             let rating = Int(tracked?.rating ?? 0)
             let detail = status == .seen && rating > 0 ? "Rated \(rating)" : t.year
-            cell.configure(t, caption: t.name, detail: detail, tint: status == .seen && rating > 0 ? Theme.accent : nil)
+            cell.configure(t, caption: t.name, detail: detail, tint: status == .seen && rating > 0 ? Theme.accent : nil, badge: PosterLockup.timesSeen(tracked))
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { cv, ip, t in
             cv.dequeueConfiguredReusableCell(using: reg, for: ip, item: t)

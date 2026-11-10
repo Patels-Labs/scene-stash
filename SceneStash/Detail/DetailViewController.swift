@@ -3,9 +3,9 @@ import UIKit
 /// A title's page, Apple TV-style: tall art with its logo and the main buttons, then what you need to know,
 /// and shelves of episodes, cast and more.
 final class DetailViewController: UIViewController, UICollectionViewDelegate {
-    nonisolated private enum Section: Hashable { case hero, progress, credits, rating, episodes, providers, cast, more }
+    nonisolated private enum Section: Hashable { case hero, progress, credits, rating, viewings, episodes, providers, cast, more }
     nonisolated private enum Item: Hashable {
-        case hero, progress, credits, rating
+        case hero, progress, credits, rating, viewings
         case episode(Episode), provider(Provider), cast(CastMember), title(Title)
     }
 
@@ -148,8 +148,9 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
                 primary.configuration?.image = UIImage(systemName: live.pausedAt == nil ? "pause.fill" : "play.fill")
             } else {
                 let resume = (tracked?.position ?? 0) > 0 && tracked?.status != .seen
-                primary.configuration?.title = resume ? "Resume" : "Start Watching"
-                primary.configuration?.image = UIImage(systemName: "play.fill")
+                let again = tracked?.status == .seen
+                primary.configuration?.title = resume ? "Resume" : again ? "Watch Again" : "Start Watching"
+                primary.configuration?.image = UIImage(systemName: again ? "arrow.counterclockwise" : "play.fill")
             }
             primary.isHidden = (d?.runtime ?? 0) == 0 && live == nil
             let planned = Store.shared.nights(for: item).contains { $0.status() != .creditsRolled }
@@ -381,6 +382,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             case .progress: return single(estimated: 140, insets: Shelf.margin, header: true)
             case .credits: return single(estimated: 70, insets: Shelf.margin, header: false)
             case .rating: return single(estimated: 44, insets: 0, header: true)
+            case .viewings: return single(estimated: 120, insets: Shelf.margin, header: true)
             case .episodes:
                 let s = Shelf.row(width: Shelf.wide.width, height: 232)
                 s.boundarySupplementaryItems = [NSCollectionLayoutBoundarySupplementaryItem(layoutSize: .init(widthDimension: .fractionalWidth(1), heightDimension: .estimated(50)),
@@ -420,6 +422,17 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
                 Store.shared.setRating(value, for: detail?.title ?? item)
             }
         }
+        let viewingsReg = UICollectionView.CellRegistration<ViewingsCell, Item> { [unowned self] cell, _, _ in
+            let title = detail?.title ?? item
+            cell.configure(tracked?.viewings ?? [])
+            cell.onRemove = { Store.shared.removeViewing($0, of: title) }
+            cell.onAdd = { [weak self] in
+                let form = ViewingFormViewController { date, place in Store.shared.addViewing(title, date: date, place: place, runtime: self?.detail?.runtime) }
+                let nav = UINavigationController(rootViewController: form)
+                nav.sheetPresentationController?.detents = [.large()]
+                self?.present(nav, animated: true)
+            }
+        }
         let episodeReg = UICollectionView.CellRegistration<EpisodeLockup, Item> { [unowned self] cell, _, item in
             guard case .episode(let e) = item else { return }
             let key = EpisodeKey(season: e.seasonNumber, episode: e.episodeNumber)
@@ -445,6 +458,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             switch dataSource.sectionIdentifier(for: indexPath.section) {
             case .progress: header.configure(live == nil ? "Where You Are" : "Now Showing")
             case .rating: header.configure("Your Rating")
+            case .viewings: header.configure("Your Viewings")
             case .providers: header.configure("How to Watch")
             case .cast: header.configure("Cast & Crew")
             case .more: header.configure("More Like This")
@@ -461,6 +475,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             case .progress: cv.dequeueConfiguredReusableCell(using: progressReg, for: indexPath, item: item)
             case .credits: cv.dequeueConfiguredReusableCell(using: creditsReg, for: indexPath, item: item)
             case .rating: cv.dequeueConfiguredReusableCell(using: ratingReg, for: indexPath, item: item)
+            case .viewings: cv.dequeueConfiguredReusableCell(using: viewingsReg, for: indexPath, item: item)
             case .episode: cv.dequeueConfiguredReusableCell(using: episodeReg, for: indexPath, item: item)
             case .provider: cv.dequeueConfiguredReusableCell(using: providerReg, for: indexPath, item: item)
             case .cast: cv.dequeueConfiguredReusableCell(using: castReg, for: indexPath, item: item)
@@ -496,6 +511,9 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         }
         if let status, status != .watchlist {
             snap.appendSections([.rating]); snap.appendItems([.rating])
+        }
+        if item.mediaType == .movie, let tracked, !tracked.viewings.isEmpty {
+            snap.appendSections([.viewings]); snap.appendItems([.viewings])
         }
         if let n = selectedSeason, let episodes = seasonEpisodes[n], !episodes.isEmpty {
             snap.appendSections([.episodes]); snap.appendItems(episodes.map(Item.episode))
