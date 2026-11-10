@@ -37,6 +37,8 @@ final class Tracked: NSManagedObject {
     @NSManaged var position: Int32
     /// Your line on the film's stub in the stub book.
     @NSManaged var note: String?
+    /// Every time you've seen it, as JSON. Nil until there's more than the first time to remember.
+    @NSManaged var viewingsData: Data?
 
     var mediaType: MediaType { MediaType(rawValue: mediaTypeRaw ?? "") ?? .movie }
     var status: TrackStatus {
@@ -46,6 +48,20 @@ final class Tracked: NSManagedObject {
     var title: Title {
         Title(id: Int(tmdbID), mediaType: mediaType, name: name ?? "", posterPath: posterPath, backdropPath: backdropPath, date: releaseDate)
     }
+
+    /// Oldest first. Before any rewatch it's just the first time, from `watchedAt`.
+    var viewings: [Viewing] {
+        get {
+            if let data = viewingsData, let list = try? JSONDecoder().decode([Viewing].self, from: data) { return list }
+            return status == .seen ? watchedAt.map { [Viewing(date: $0)] } ?? [] : []
+        }
+        set { viewingsData = try? JSONEncoder().encode(newValue.sorted { $0.date < $1.date }) }
+    }
+}
+
+nonisolated struct Viewing: Codable, Hashable {
+    var date: Date
+    var place: String? = nil
 }
 
 @objc(WatchedEpisode)
@@ -211,7 +227,12 @@ final class Store {
         item.backdropPath = title.backdropPath ?? item.backdropPath
         item.releaseDate = title.date ?? item.releaseDate
         if let runtime { item.runtime = Int32(runtime) }
-        if status == .seen && item.status != .seen { item.watchedAt = .now; item.position = 0 }
+        if status == .seen && item.status != .seen {
+            // Finishing a rewatch: the earlier times are kept, so this is one more.
+            if item.viewingsData != nil { item.viewings.append(Viewing(date: .now)) }
+            item.watchedAt = .now
+            item.position = 0
+        }
         item.status = status
         save()
         return item
@@ -221,6 +242,7 @@ final class Store {
         let item = tracked(title.id, title.mediaType) ?? track(title, status: .seen)
         item.rating = Int16(rating)
         mirrorToNights(title)
+        mirrorToFriends(title)
         save()
     }
 
@@ -229,7 +251,11 @@ final class Store {
         let item = tracked(title.id, title.mediaType) ?? track(title, status: .watching, runtime: runtime)
         if let runtime, item.runtime == 0 { item.runtime = Int32(runtime) }
         item.position = Int32(max(seconds, 0))
-        if seconds > 0, item.status != .watching { item.status = .watching }
+        if seconds > 0, item.status != .watching {
+            // Starting it again: write down the times so far before Watching hides them.
+            if item.status == .seen { item.viewings = item.viewings }
+            item.status = .watching
+        }
         save()
     }
 
@@ -238,6 +264,28 @@ final class Store {
         let trimmed = note?.trimmingCharacters(in: .whitespacesAndNewlines)
         item.note = trimmed?.isEmpty == false ? trimmed : nil
         mirrorToNights(title)
+        mirrorToFriends(title)
+        save()
+    }
+
+    /// Another time you saw it. The first add also writes down the time it was marked seen.
+    func addViewing(_ title: Title, date: Date, place: String?, runtime: Int? = nil) {
+        let item = tracked(title.id, title.mediaType) ?? track(title, status: .watchlist, runtime: runtime)
+        var list = item.viewings
+        if item.status != .seen { item.status = .seen; item.position = 0 }
+        list.append(Viewing(date: date, place: place?.isEmpty == true ? nil : place))
+        item.viewings = list
+        item.watchedAt = max(item.watchedAt ?? date, date)
+        save()
+    }
+
+    func removeViewing(_ viewing: Viewing, of title: Title) {
+        guard let item = tracked(title.id, title.mediaType) else { return }
+        var list = item.viewings
+        guard list.count > 1, let i = list.firstIndex(of: viewing) else { return }
+        list.remove(at: i)
+        item.viewings = list
+        item.watchedAt = list.last?.date
         save()
     }
 
@@ -337,6 +385,7 @@ final class Store {
             attr("releaseDate", .stringAttributeType), attr("rating", .integer16AttributeType, 0),
             attr("runtime", .integer32AttributeType, 0), attr("addedAt", .dateAttributeType),
             attr("watchedAt", .dateAttributeType), attr("position", .integer32AttributeType, 0), attr("note", .stringAttributeType),
+            attr("viewingsData", .binaryDataAttributeType),
         ]
         let episode = NSEntityDescription()
         episode.name = "WatchedEpisode"
@@ -390,8 +439,53 @@ final class Store {
             attr("authorName", .stringAttributeType), attr("text", .stringAttributeType),
             attr("rating", .integer16AttributeType, 0), attr("createdAt", .dateAttributeType), noteNight,
         ]
+        /// A to-many and its inverse, cascading from the parent.
+        func children(_ name: String, of parent: NSEntityDescription, _ child: NSEntityDescription, back: String) -> (NSRelationshipDescription, NSRelationshipDescription) {
+            let many = NSRelationshipDescription()
+            many.name = name
+            many.destinationEntity = child
+            many.minCount = 0
+            many.maxCount = 0
+            many.deleteRule = .cascadeDeleteRule
+            many.isOptional = true
+            let one = NSRelationshipDescription()
+            one.name = back
+            one.destinationEntity = parent
+            one.maxCount = 1
+            one.deleteRule = .nullifyDeleteRule
+            one.isOptional = true
+            many.inverseRelationship = one
+            one.inverseRelationship = many
+            return (many, one)
+        }
+        let photo = NSEntityDescription()
+        photo.name = "NightPhoto"
+        photo.managedObjectClassName = NSStringFromClass(NightPhoto.self)
+        let (photos, photoNight) = children("photos", of: night, photo, back: "night")
+        night.properties.append(photos)
+        let image = attr("imageData", .binaryDataAttributeType)
+        image.allowsExternalBinaryDataStorage = true
+        photo.properties = [
+            attr("uuid", .stringAttributeType), attr("authorID", .stringAttributeType), attr("authorName", .stringAttributeType),
+            image, attr("createdAt", .dateAttributeType), photoNight,
+        ]
+        let friend = NSEntityDescription()
+        friend.name = "Friend"
+        friend.managedObjectClassName = NSStringFromClass(Friend.self)
+        let rec = NSEntityDescription()
+        rec.name = "Recommendation"
+        rec.managedObjectClassName = NSStringFromClass(Recommendation.self)
+        let (recs, recFriend) = children("recs", of: friend, rec, back: "friend")
+        friend.properties = [attr("uuid", .stringAttributeType), attr("createdAt", .dateAttributeType), recs]
+        rec.properties = [
+            attr("uuid", .stringAttributeType), attr("authorID", .stringAttributeType), attr("authorName", .stringAttributeType),
+            attr("tmdbID", .integer64AttributeType, 0), attr("mediaTypeRaw", .stringAttributeType), attr("name", .stringAttributeType),
+            attr("posterPath", .stringAttributeType), attr("backdropPath", .stringAttributeType), attr("note", .stringAttributeType),
+            attr("senderRating", .integer16AttributeType, 0), attr("rating", .integer16AttributeType, 0), attr("line", .stringAttributeType),
+            attr("ratedAt", .dateAttributeType), attr("createdAt", .dateAttributeType), recFriend,
+        ]
         let model = NSManagedObjectModel()
-        model.entities = [tracked, episode, marathon, night, note]
+        model.entities = [tracked, episode, marathon, night, note, photo, friend, rec]
         return model
     }()
 }

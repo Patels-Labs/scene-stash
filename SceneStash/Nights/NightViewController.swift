@@ -368,40 +368,13 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
             present(alert, animated: true)
             return
         }
-        if let share = Store.shared.share(for: night) { presentInvite(share, from: sender); return }
-        // Make the share before the sheet opens: creating it from inside the sheet hid the real error and could hang.
-        creatingShare = true
-        invite.configuration?.showsActivityIndicator = true
-        invite.isEnabled = false
-        let id = night.objectID
-        Task {
-            defer {
-                creatingShare = false
-                invite.configuration?.showsActivityIndicator = false
-                invite.isEnabled = true
-                render()
-            }
-            do {
-                presentInvite(try await Store.shared.makeShare(for: id), from: sender)
-            } catch {
-                let ns = error as NSError
-                let underlying = (ns.userInfo[NSUnderlyingErrorKey] as? NSError).map { "\n\($0.localizedDescription) (\($0.domain) \($0.code))" } ?? ""
-                let alert = UIAlertController(title: "Couldn't create the invite",
-                                              message: "\(ns.localizedDescription) (\(ns.domain) \(ns.code))\(underlying)", preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "OK", style: .default))
-                present(alert, animated: true)
-            }
+        invite(night, title: "Movie night: \(night.name ?? "a film")", from: sender) { [weak self] busy in
+            guard let self else { return }
+            creatingShare = busy
+            invite.configuration?.showsActivityIndicator = busy
+            invite.isEnabled = !busy
+            if !busy { render() }
         }
-    }
-
-    private func presentInvite(_ share: CKShare, from sender: UIView?) {
-        let provider = NSItemProvider()
-        // Read and write for everyone; you choose whether it's only people you add or anyone with the link.
-        let options = CKAllowedSharingOptions(allowedParticipantPermissionOptions: .readWrite, allowedParticipantAccessOptions: .any)
-        provider.registerCKShare(share, container: Store.shared.cloudContainer, allowedSharingOptions: options)
-        let sheet = UIActivityViewController(activityItemsConfiguration: UIActivityItemsConfiguration(itemProviders: [provider]))
-        sheet.popoverPresentationController?.sourceView = sender
-        present(sheet, animated: true)
     }
 
     private func managePeople() {
@@ -576,4 +549,38 @@ private final class ReactionRow: UIView {
         accessibilityLabel = [name, line, rating > 0 ? "rated \(rating)" : nil].compactMap { $0 }.joined(separator: ", ")
     }
     required init?(coder: NSCoder) { fatalError() }
+}
+
+extension UIViewController {
+    /// Opens the invite sheet for a night or a friend, making its iCloud share first if it hasn't one.
+    /// `busy` is true while the share is being made.
+    func invite(_ object: NSManagedObject, title: String, from sender: UIView?, busy: @escaping (Bool) -> Void = { _ in }) {
+        if let share = Store.shared.share(for: object) { presentInvite(share, from: sender); return }
+        // Make the share before the sheet opens: creating it from inside the sheet hid the real error and could hang.
+        busy(true)
+        let id = object.objectID
+        Task {
+            defer { busy(false) }
+            do {
+                presentInvite(try await Store.shared.makeShare(for: id, title: title), from: sender)
+            } catch {
+                let ns = error as NSError
+                let underlying = (ns.userInfo[NSUnderlyingErrorKey] as? NSError).map { "\n\($0.localizedDescription) (\($0.domain) \($0.code))" } ?? ""
+                let alert = UIAlertController(title: "Couldn't create the invite",
+                                              message: "\(ns.localizedDescription) (\(ns.domain) \(ns.code))\(underlying)", preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "OK", style: .default))
+                present(alert, animated: true)
+            }
+        }
+    }
+
+    private func presentInvite(_ share: CKShare, from sender: UIView?) {
+        let provider = NSItemProvider()
+        // Read and write for everyone; you choose whether it's only people you add or anyone with the link.
+        let options = CKAllowedSharingOptions(allowedParticipantPermissionOptions: .readWrite, allowedParticipantAccessOptions: .any)
+        provider.registerCKShare(share, container: Store.shared.cloudContainer, allowedSharingOptions: options)
+        let sheet = UIActivityViewController(activityItemsConfiguration: UIActivityItemsConfiguration(itemProviders: [provider]))
+        sheet.popoverPresentationController?.sourceView = sender
+        present(sheet, animated: true)
+    }
 }
