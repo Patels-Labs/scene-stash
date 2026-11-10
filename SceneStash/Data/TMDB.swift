@@ -326,6 +326,17 @@ final class TMDB {
                       parts: s.parts.filter { DateText.isPast($0.date) }.sorted { ($0.date ?? "") < ($1.date ?? "") })
     }
 
+    /// What a film adds to the passport: its year, countries, director and genres.
+    func fact(_ id: Int) async -> FilmFact? {
+        struct Named: Decodable { let name: String }
+        struct Crew: Decodable { let name: String; let job: String? }
+        struct Credits: Decodable { let crew: [Crew] }
+        struct Raw: Decodable { let title: String; let releaseDate: String?; let productionCountries: [Named]?; let genres: [Named]?; let credits: Credits? }
+        guard let r: Raw = try? await get("movie/\(id)", ["append_to_response": "credits"]) else { return nil }
+        return FilmFact(id: id, name: r.title, year: r.releaseDate.flatMap { Int($0.prefix(4)) }, countries: r.productionCountries?.map(\.name) ?? [],
+                        director: r.credits?.crew.first { $0.job == "Director" }?.name, genres: r.genres?.map(\.name) ?? [])
+    }
+
     /// Just a film's running time, without everything else on its page.
     func runtime(_ id: Int) async -> Int? {
         let d: TitleDetail? = try? await get("movie/\(id)")

@@ -3,4 +3,4 @@
 cd "$(dirname "$0")/.."
 OUT=$(mktemp -d)
 cat scripts/check_*.swift > "$OUT/main.swift"
-swiftc -swift-version 6 SceneStash/Data/Progress.swift SceneStash/Data/Holidays.swift SceneStash/Data/MarathonPlan.swift SceneStash/Data/NightStatus.swift SceneStash/Data/TimeFit.swift "$OUT/main.swift" -o "$OUT/check" && "$OUT/check"
+swiftc -swift-version 6 SceneStash/Data/Progress.swift SceneStash/Data/Holidays.swift SceneStash/Data/MarathonPlan.swift SceneStash/Data/NightStatus.swift SceneStash/Data/TimeFit.swift SceneStash/Data/Passport.swift "$OUT/main.swift" -o "$OUT/check" && "$OUT/check"
