@@ -1,10 +1,11 @@
 import CloudKit
 import CoreData
+import PhotosUI
 import UIKit
 
 /// One night out, Apple TV-style: the film's art and logo with Directions and Invite Friends, then where the
 /// evening's got to, your ticket, who's going, and once it's finished, everyone's reactions.
-final class NightViewController: UIViewController, UICloudSharingControllerDelegate {
+final class NightViewController: UIViewController, UICloudSharingControllerDelegate, PHPickerViewControllerDelegate {
     private let night: MovieNight
     private var clock: Timer?
     private var creatingShare = false
@@ -23,6 +24,11 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
     private let notes = UIStackView()
     private let myLine = UITextField()
     private let myRating = RatingRow(inset: 0)
+    private let photos = UIStackView()
+    private var photosSection: UIView!
+    private var shownPhotos: [String] = []
+    private let pastNights = UIStackView()
+    private var pastSection: UIView!
 
     init(night: MovieNight) {
         self.night = night
@@ -43,6 +49,8 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
         buildAfter()
         buildReactions()
         afterSection = section("After the Film", after)
+        photosSection = section("Photos", shelf(photos, height: Shelf.wide.height), inset: false)
+        pastSection = section("Past Nights", shelf(pastNights, height: Shelf.poster.height + 26), inset: false)
 
         let scroll = UIScrollView()
         scroll.keyboardDismissMode = .interactive
@@ -65,7 +73,7 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
             }
         }
         let page = UIStackView(arrangedSubviews: [hero, padded(steps), section("Your Ticket", ticket), section("Who's Going", peopleRow(), inset: false),
-                                                  afterSection, reactions])
+                                                  afterSection, photosSection, reactions, pastSection])
         page.axis = .vertical
         page.spacing = 28
         scroll.addSubview(page)
@@ -153,21 +161,24 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
         steps.directionalLayoutMargins = .init(top: 16, leading: 16, bottom: 16, trailing: 16)
     }
 
-    private func peopleRow() -> UIView {
+    private func peopleRow() -> UIView { shelf(people, height: Shelf.poster.width + 52) }
+
+    /// A row that scrolls sideways, lined up with the page margins.
+    private func shelf(_ row: UIStackView, height: CGFloat) -> UIView {
         let scroll = UIScrollView()
         scroll.showsHorizontalScrollIndicator = false
         scroll.contentInset = .init(top: 0, left: Shelf.margin, bottom: 0, right: Shelf.margin)
-        people.spacing = Shelf.gap
-        people.alignment = .top
-        scroll.addSubview(people)
-        people.translatesAutoresizingMaskIntoConstraints = false
+        row.spacing = Shelf.gap
+        row.alignment = .top
+        scroll.addSubview(row)
+        row.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            people.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
-            people.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
-            people.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
-            people.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
-            people.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor),
-            scroll.heightAnchor.constraint(equalToConstant: Shelf.poster.width + 52),
+            row.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            row.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            row.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor),
+            scroll.heightAnchor.constraint(equalToConstant: height),
         ])
         return scroll
     }
@@ -244,7 +255,15 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
         let showtime = night.showtime ?? .now
         let crew = Store.shared.guests(for: night)
         let day = showtime.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
-        hero.meta.text = "Movie Night · \(day)" + (crew.count > 1 ? " · \(crew.count) going" : "")
+        if stage == .creditsRolled {
+            // The scrapbook page: where it was, then how it went.
+            let ratings = (night.notes ?? []).map { Int($0.rating) }.filter { $0 > 0 }
+            let average = ratings.isEmpty ? nil : (Double(ratings.reduce(0, +)) / Double(ratings.count)).formatted(.number.precision(.fractionLength(0...1)))
+            let stats = ["\(crew.count) went", average.map { "\($0) average" }, night.seats.map { "Seats \($0)" }].compactMap { $0 }
+            hero.meta.text = (["Night Out", day, night.cinema].compactMap { $0 }.joined(separator: " · ")) + "\n" + stats.joined(separator: " · ")
+        } else {
+            hero.meta.text = "Movie Night · \(day)" + (crew.count > 1 ? " · \(crew.count) going" : "")
+        }
         hero.meta.isHidden = false
 
         primary.configuration?.title = night.cinema == nil ? "Add a Cinema" : "Directions"
@@ -274,7 +293,109 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
         afterDetail.text = "Watching at \(showtime.formatted(date: .omitted, time: .shortened)), Watched at about \(lightsUp)"
 
         reactions.isHidden = stage != .creditsRolled
-        if stage == .creditsRolled { renderNotes() }
+        photosSection.isHidden = stage != .creditsRolled
+        pastSection.isHidden = stage != .creditsRolled
+        if stage == .creditsRolled { renderNotes(); renderPhotos(); renderPast() }
+    }
+
+    /// Everyone's photos, oldest first, then a tile to add more. Only rebuilt when the set changes.
+    private func renderPhotos() {
+        let all = (night.photos ?? []).filter { $0.imageData != nil }.sorted { ($0.createdAt ?? .now) < ($1.createdAt ?? .now) }
+        let ids = all.compactMap(\.uuid)
+        guard ids != shownPhotos || photos.arrangedSubviews.isEmpty else { return }
+        shownPhotos = ids
+        photos.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for photo in all {
+            guard let data = photo.imageData else { continue }
+            let tile = PhotoTile(image: UIImage(data: data), by: photo.authorID == Prefs.me ? "You" : photo.authorName ?? "A friend")
+            tile.addAction(UIAction { [weak self, weak tile] _ in self?.view(photo, from: tile) }, for: .primaryActionTriggered)
+            if photo.authorID == Prefs.me {
+                tile.menu = UIMenu(children: [
+                    UIAction(title: "View", image: UIImage(systemName: "photo")) { [weak self, weak tile] _ in self?.view(photo, from: tile) },
+                    UIAction(title: "Delete Photo", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in Store.shared.delete(photo) },
+                ])
+            }
+            photos.addArrangedSubview(tile)
+        }
+        var add = UIButton.Configuration.glass()
+        add.title = "Add Photos"
+        add.image = UIImage(systemName: "camera")
+        add.imagePlacement = .top
+        add.imagePadding = 8
+        add.baseForegroundColor = .white
+        add.background.cornerRadius = 12
+        let button = UIButton(configuration: add, primaryAction: UIAction { [weak self] _ in self?.addPhotos() })
+        button.widthAnchor.constraint(equalToConstant: Shelf.wide.height).isActive = true
+        button.heightAnchor.constraint(equalToConstant: Shelf.wide.height).isActive = true
+        photos.addArrangedSubview(button)
+    }
+
+    /// Your other finished nights, newest first.
+    private func renderPast() {
+        pastNights.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let past = Store.shared.nights().filter { $0 != night && $0.status() == .creditsRolled }.reversed()
+        pastSection.isHidden = past.isEmpty
+        for other in past.prefix(12) {
+            let art = ArtView(radius: 10)
+            art.show(TMDB.imageURL(other.posterPath, .poster), name: other.name)
+            let date = UILabel.make(Theme.text(.footnote), Theme.secondary)
+            date.text = (other.showtime ?? .now).formatted(.dateTime.month(.abbreviated).year())
+            let stack = UIStackView(arrangedSubviews: [art, date])
+            stack.axis = .vertical
+            stack.spacing = 6
+            stack.isUserInteractionEnabled = false
+            let tile = UIControl()
+            tile.addSubview(stack)
+            stack.pin(to: tile)
+            NSLayoutConstraint.activate([art.widthAnchor.constraint(equalToConstant: Shelf.poster.width), art.heightAnchor.constraint(equalToConstant: Shelf.poster.height)])
+            tile.addAction(UIAction { [weak self] _ in
+                Haptics.tap()
+                self?.navigationController?.pushViewController(NightViewController(night: other), animated: true)
+            }, for: .touchUpInside)
+            tile.isAccessibilityElement = true
+            tile.accessibilityTraits = .button
+            tile.accessibilityLabel = "\(other.name ?? ""), \(date.text ?? "")"
+            pastNights.addArrangedSubview(tile)
+        }
+    }
+
+    private func addPhotos() {
+        var config = PHPickerConfiguration()
+        config.filter = .images
+        config.selectionLimit = 10
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = self
+        present(picker, animated: true)
+    }
+
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true)
+        for result in results where result.itemProvider.canLoadObject(ofClass: UIImage.self) {
+            result.itemProvider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+                guard let image = object as? UIImage, let data = Self.shrink(image) else { return }
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    Store.shared.addPhoto(data, to: self.night)
+                    Haptics.success()
+                }
+            }
+        }
+    }
+
+    /// Photos go to everyone through iCloud, so they're sent at most 1600 pixels across.
+    nonisolated private static func shrink(_ image: UIImage) -> Data? {
+        let scale = min(1600 / max(image.size.width, image.size.height), 1)
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: size, format: format).jpegData(withCompressionQuality: 0.7) { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+    }
+
+    private func view(_ photo: NightPhoto, from tile: UIView?) {
+        guard let data = photo.imageData else { return }
+        let viewer = PhotoViewController(image: UIImage(data: data))
+        viewer.preferredTransition = .zoom { _ in tile }
+        present(viewer, animated: true)
     }
 
     private func stepNote(_ step: NightStatus) -> String {
@@ -583,4 +704,62 @@ extension UIViewController {
         sheet.popoverPresentationController?.sourceView = sender
         present(sheet, animated: true)
     }
+}
+
+/// A photo from the night, with who took it on a frosted label.
+private final class PhotoTile: UIButton {
+    init(image: UIImage?, by: String) {
+        super.init(frame: .zero)
+        let art = ArtView(radius: 12)
+        art.image = image
+        art.isUserInteractionEnabled = false
+        let label = GlassLabel()
+        label.text = by
+        label.isUserInteractionEnabled = false
+        [art, label].forEach { addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        art.pin(to: self)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: Shelf.wide.width),
+            heightAnchor.constraint(equalToConstant: Shelf.wide.height),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+        ])
+        isAccessibilityElement = true
+        accessibilityLabel = "Photo from \(by)"
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isHighlighted: Bool { didSet { Spring.press(self, isHighlighted) } }
+}
+
+/// One photo, full screen. Tap or swipe down to close.
+private final class PhotoViewController: UIViewController {
+    private let image: UIImage?
+    init(image: UIImage?) {
+        self.image = image
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .fullScreen
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        let imageView = UIImageView(image: image)
+        imageView.contentMode = .scaleAspectFit
+        imageView.isAccessibilityElement = true
+        imageView.accessibilityLabel = "Photo"
+        view.addSubview(imageView)
+        imageView.pin(to: view)
+        let close = CapsuleButton.circle("xmark", label: "Close")
+        view.addSubview(close)
+        NSLayoutConstraint.activate([
+            close.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            close.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Shelf.margin),
+        ])
+        close.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .primaryActionTriggered)
+        view.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(close(_:))))
+    }
+
+    @objc private func close(_ sender: Any) { dismiss(animated: true) }
 }
