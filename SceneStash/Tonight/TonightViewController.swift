@@ -32,8 +32,8 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             }
         }
     }
-    nonisolated private enum Section: Hashable { case hero, night, watchlist, upcoming, trending }
-    nonisolated private enum Item: Hashable { case hero, night(String), watchlist(Title), upcoming(Upcoming), trending(Title) }
+    nonisolated private enum Section: Hashable { case hero, night, friends, watchlist, upcoming, trending }
+    nonisolated private enum Item: Hashable { case hero, night(String), friend(String), watchlist(Title), upcoming(Upcoming), trending(Title) }
 
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
@@ -331,6 +331,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
                 return section
             case .night: return Shelf.feature(height: (env.container.effectiveContentSize.width - Shelf.margin * 2) * 9 / 16)
             case .upcoming: return Shelf.posters(captions: 2)
+            case .friends: return Shelf.wides(captions: 2)
             case .watchlist, .trending: return Shelf.posters()
             }
         }
@@ -356,6 +357,13 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             cell.configure(.init(backdrop: TMDB.imageURL(night.backdropPath ?? night.posterPath, .backdrop), title: night.name ?? "",
                                  meta: "\(when) · Showtime \(time)" + (night.cinema.map { " · \($0)" } ?? ""), badge: night.status().label))
         }
+        let friendReg = UICollectionView.CellRegistration<WideLockup, Item> { cell, _, item in
+            guard case .friend(let uuid) = item, let rec = Store.shared.recommendations().first(where: { $0.uuid == uuid }) else { return }
+            let from = rec.authorName ?? "a friend"
+            cell.configure(.init(backdrop: TMDB.imageURL(rec.backdropPath ?? rec.posterPath, .backdrop), title: rec.name ?? "",
+                                 badge: "From \(from)" + (rec.senderRating > 0 ? " · \(rec.senderRating)" : ""),
+                                 caption: rec.note.map { "“\($0)”" } ?? "Passed on by \(from)", detail: rec.createdAt?.formatted(.relative(presentation: .named))))
+        }
         let posterReg = UICollectionView.CellRegistration<PosterLockup, Item> { cell, _, item in
             switch item {
             case .trending(let t), .watchlist(let t): cell.configure(t)
@@ -366,6 +374,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         let headerReg = UICollectionView.SupplementaryRegistration<ShelfHeader>(elementKind: ShelfHeader.kind) { [unowned self] header, _, indexPath in
             switch dataSource.sectionIdentifier(for: indexPath.section) {
             case .night: header.configure("Movie Nights") { [weak self] in self?.openTab("nights") }
+            case .friends: header.configure("From Friends") { [weak self] in self?.navigationController?.pushViewController(PassItOnViewController(), animated: true) }
             case .watchlist: header.configure("Your Watchlist") { [weak self] in self?.openTab("stash") }
             case .upcoming: header.configure("Coming Soon")
             case .trending: header.configure("Everyone's Watching")
@@ -376,6 +385,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             switch item {
             case .hero: cv.dequeueConfiguredReusableCell(using: heroReg, for: indexPath, item: item)
             case .night: cv.dequeueConfiguredReusableCell(using: nightReg, for: indexPath, item: item)
+            case .friend: cv.dequeueConfiguredReusableCell(using: friendReg, for: indexPath, item: item)
             case .upcoming, .trending, .watchlist: cv.dequeueConfiguredReusableCell(using: posterReg, for: indexPath, item: item)
             }
         }
@@ -391,6 +401,8 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
         if let next = Store.shared.nights().first(where: { $0.status() != .creditsRolled && $0.uuid != tonight }), let uuid = next.uuid {
             snap.appendSections([.night]); snap.appendItems([.night(uuid)])
         }
+        let passed = Store.shared.fromFriends().compactMap(\.uuid)
+        if !passed.isEmpty { snap.appendSections([.friends]); snap.appendItems(passed.prefix(10).map(Item.friend)) }
         let picked = Set(programme.compactMap(\.title))
         let ready = Store.shared.all(.watchlist).map(\.title).filter { !picked.contains($0) && ($0.date.map { DateText.isPast($0) } ?? true) }
         if !ready.isEmpty { snap.appendSections([.watchlist]); snap.appendItems(ready.map(Item.watchlist)) }
@@ -466,6 +478,9 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             navigationController?.pushViewController(NightViewController(night: night), animated: true)
             return
         case .upcoming(let u): title = u.title
+        case .friend(let uuid):
+            guard let rec = Store.shared.recommendations().first(where: { $0.uuid == uuid }) else { return }
+            title = rec.title
         case .trending(let t), .watchlist(let t): title = t
         case .hero: return
         }

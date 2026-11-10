@@ -230,7 +230,15 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
     }
 
     private func moreMenu() -> [UIMenuElement] {
-        [UIAction(title: "Share", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in self?.share() }]
+        [
+            UIAction(title: "Recommend to a Friend", image: UIImage(systemName: "person.wave.2")) { [weak self] _ in
+                guard let self else { return }
+                let nav = UINavigationController(rootViewController: RecommendViewController(title: detail?.title ?? item))
+                nav.sheetPresentationController?.detents = [.medium(), .large()]
+                present(nav, animated: true)
+            },
+            UIAction(title: "Share", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in self?.share() },
+        ]
     }
 
     // MARK: Actions
