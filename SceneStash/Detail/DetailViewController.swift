@@ -65,6 +65,8 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             do {
                 let detail = try await TMDB.shared.detail(item.id, item.mediaType)
                 self.detail = detail
+                // Opened from a widget link, which carries no artwork.
+                if item.posterPath == nil { hero.show(detail.title, meta: nil) }
                 if detail.mediaType == .tv {
                     watched = Store.shared.watched(show: detail.id)
                     let next = detail.nextUp(watched: watched)

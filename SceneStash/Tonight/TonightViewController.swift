@@ -253,10 +253,10 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             case .outing(let o): code = o.place ?? "Night out"
             default: code = DateText.runtime(slot.minutes)
             }
-            snap.programme.append(.init(id: title.id, name: title.name, code: code, start: start, tint: tint))
+            snap.programme.append(.init(id: title.id, type: title.mediaType.rawValue, name: title.name, code: code, start: start, tint: tint))
         }
         if let next = upcoming.first(where: { $0.label.contains("premiere") || $0.label == "In cinemas" }) ?? upcoming.first {
-            snap.premiere = .init(id: next.title.id, name: next.title.name, label: next.label, date: next.date)
+            snap.premiere = .init(id: next.title.id, type: next.title.mediaType.rawValue, name: next.title.name, label: next.label, date: next.date)
             await saveWidgetArt(next.title)
         }
         if let u = upNext.first, let detail = details[u.show.id] {
