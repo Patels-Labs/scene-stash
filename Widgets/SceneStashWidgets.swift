@@ -99,7 +99,9 @@ struct TonightWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "tonight", provider: SnapshotProvider()) { entry in
             let first = entry.snapshot.unlocked ? entry.snapshot.programme.first : nil
-            TonightView(snapshot: entry.snapshot).containerBackground(for: .widget) { Art(id: first?.id, tint: first?.tint) }
+            TonightView(snapshot: entry.snapshot)
+                .containerBackground(for: .widget) { Art(id: first?.id, tint: first?.tint) }
+                .widgetURL(first.flatMap { WidgetSnapshot.link($0.id, $0.type, $0.name) })
         }
         .configurationDisplayName("Tonight")
         .description("What's on tonight, and when.")
@@ -126,10 +128,12 @@ private struct TonightView: View {
                 Text(first.name).font(.system(.title2, weight: .bold)).lineLimit(1)
                 Text(first.start.formatted(date: .omitted, time: .shortened) + " · " + first.code).font(.subheadline).lineLimit(1)
                 ForEach(Array(snapshot.programme.prefix(family == .systemLarge ? 4 : 2).dropFirst().enumerated()), id: \.offset) { _, slot in
-                    HStack {
-                        Text(slot.name).lineLimit(1)
-                        Spacer(minLength: 4)
-                        Text(slot.start.formatted(date: .omitted, time: .shortened)).foregroundStyle(.white.opacity(0.75))
+                    Link(destination: WidgetSnapshot.link(slot.id, slot.type, slot.name) ?? URL(string: "scenestash://")!) {
+                        HStack {
+                            Text(slot.name).lineLimit(1)
+                            Spacer(minLength: 4)
+                            Text(slot.start.formatted(date: .omitted, time: .shortened)).foregroundStyle(.white.opacity(0.75))
+                        }
                     }
                     .font(.footnote)
                 }
@@ -149,6 +153,7 @@ struct PremiereWidget: Widget {
         StaticConfiguration(kind: "premiere", provider: SnapshotProvider()) { entry in
             PremiereView(snapshot: entry.snapshot, now: entry.date)
                 .containerBackground(for: .widget) { Art(id: entry.snapshot.unlocked ? entry.snapshot.premiere?.id : nil) }
+                .widgetURL(entry.snapshot.premiere.flatMap { entry.snapshot.unlocked ? WidgetSnapshot.link($0.id, $0.type, $0.name) : nil })
         }
         .configurationDisplayName("Coming soon")
         .description("Days until the next new episode or season in your library.")
@@ -183,6 +188,7 @@ struct UpNextWidget: Widget {
         StaticConfiguration(kind: "punchcard", provider: SnapshotProvider()) { entry in
             UpNextView(snapshot: entry.snapshot)
                 .containerBackground(for: .widget) { Art(id: entry.snapshot.unlocked ? entry.snapshot.card?.id : nil) }
+                .widgetURL(entry.snapshot.card.flatMap { entry.snapshot.unlocked ? WidgetSnapshot.link($0.id, "tv", $0.name) : nil })
         }
         .configurationDisplayName("Up Next")
         .description("The season you're on, episode by episode.")

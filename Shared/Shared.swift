@@ -17,8 +17,9 @@ nonisolated enum SharedBox {
 
 /// What the widgets show, written by the app whenever Tonight refreshes.
 nonisolated struct WidgetSnapshot: Codable, Sendable {
-    struct Slot: Codable, Sendable { let id: Int; let name: String; let code: String; let start: Date; let tint: String }
-    struct Premiere: Codable, Sendable { let id: Int; let name: String; let label: String; let date: Date }
+    // type: "movie" or "tv", for the link back into the app; nil in snapshots saved before links.
+    struct Slot: Codable, Sendable { let id: Int; var type: String? = nil; let name: String; let code: String; let start: Date; let tint: String }
+    struct Premiere: Codable, Sendable { let id: Int; var type: String? = nil; let name: String; let label: String; let date: Date }
     struct Card: Codable, Sendable { let id: Int; let name: String; let season: Int; let holes: [Int]; let left: Int } // holes: 0 todo, 1 watched, 2 next
 
     var unlocked = false
@@ -33,6 +34,14 @@ nonisolated struct WidgetSnapshot: Codable, Sendable {
         SharedBox.defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(WidgetSnapshot.self, from: $0) } ?? WidgetSnapshot()
     }
     func save() { SharedBox.defaults.set(try? JSONEncoder().encode(self), forKey: Self.key) }
+
+    /// scenestash://title/tv/95396?name=Severance — tapping a widget opens that title's page.
+    static func link(_ id: Int, _ type: String?, _ name: String) -> URL? {
+        guard let type else { return nil }
+        var c = URLComponents(string: "scenestash://title/\(type)/\(id)")
+        c?.queryItems = [URLQueryItem(name: "name", value: name)]
+        return c?.url
+    }
 }
 
 // MARK: - Now showing

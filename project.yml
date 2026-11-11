@@ -40,6 +40,9 @@ targets:
         UIUserInterfaceStyle: Dark
         NSSupportsLiveActivities: true
         CKSharingSupported: true
+        CFBundleURLTypes:
+          - CFBundleURLName: com.heetpatel.scenestash
+            CFBundleURLSchemes: [scenestash]
         UIBackgroundModes: [remote-notification]
     settings:
       base:
