@@ -276,7 +276,7 @@ final class ReelViewController: UIViewController, UICollectionViewDelegate {
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         guard let t = dataSource.itemIdentifier(for: indexPath) else { return }
-        openDetail(t) { [weak self] in self?.collectionView.cellForItem(at: indexPath) }
+        openDetail(t) { [weak self] in self?.dataSource.indexPath(for: t).flatMap { self?.collectionView.cellForItem(at: $0) } }
     }
 
     func collectionView(_ collectionView: UICollectionView, contextMenuConfigurationForItemsAt indexPaths: [IndexPath], point: CGPoint) -> UIContextMenuConfiguration? {

@@ -48,9 +48,14 @@ final class ImageLoader {
 extension UIImageView {
     private static var taskKey: UInt8 = 0
 
+    /// Stops a load setImage started, so it can't land over an image set some other way.
+    func cancelImageLoad() {
+        (objc_getAssociatedObject(self, &Self.taskKey) as? Task<Void, Never>)?.cancel()
+    }
+
     /// Sets a remote image with a quick fade, cancelling any previous load for this view (safe for reused cells).
     func setImage(_ url: URL?, placeholder: UIImage? = nil) {
-        (objc_getAssociatedObject(self, &Self.taskKey) as? Task<Void, Never>)?.cancel()
+        cancelImageLoad()
         guard let url else { image = placeholder; return }
         if let hit = ImageLoader.shared.cached(url) { image = hit; return }
         image = placeholder

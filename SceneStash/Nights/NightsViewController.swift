@@ -218,6 +218,7 @@ final class NightFeatureCell: UICollectionViewCell {
             let artwork = await TMDB.shared.artwork(Int(night.tmdbID), .movie)
             guard !Task.isCancelled, let self else { return }
             if let url = TMDB.imageURL(artwork.poster, .hero), let image = await ImageLoader.shared.image(url), !Task.isCancelled {
+                art.cancelImageLoad()
                 UIView.transition(with: art, duration: 0.3, options: .transitionCrossDissolve) { self.art.image = image }
             }
             guard let url = TMDB.imageURL(artwork.logo, .posterLarge), let image = await ImageLoader.shared.image(url), !Task.isCancelled else { return }

@@ -480,6 +480,7 @@ final class HeroView: UIView {
             let artwork = await TMDB.shared.artwork(title.id, title.mediaType)
             guard !Task.isCancelled, let self else { return }
             if poster == nil, let clean = TMDB.imageURL(artwork.poster, .hero), let image = await ImageLoader.shared.image(clean), !Task.isCancelled {
+                art.cancelImageLoad() // or the text-on poster, if it's slower, lands back over the clean one
                 UIView.transition(with: art, duration: 0.3, options: .transitionCrossDissolve) { self.art.image = image }
             }
             guard let url = TMDB.imageURL(artwork.logo, .posterLarge), let image = await ImageLoader.shared.image(url), !Task.isCancelled else { return }

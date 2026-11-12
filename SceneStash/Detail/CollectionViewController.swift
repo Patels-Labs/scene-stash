@@ -162,7 +162,7 @@ final class CollectionViewController: UIViewController, UICollectionViewDelegate
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         guard case .film(let t) = dataSource.itemIdentifier(for: indexPath) else { return }
         Haptics.tap()
-        openDetail(t) { collectionView.cellForItem(at: indexPath) }
+        openDetail(t) { [weak self] in self?.dataSource.indexPath(for: .film(t)).flatMap { collectionView.cellForItem(at: $0) } }
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {

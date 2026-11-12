@@ -248,7 +248,7 @@ final class PassItOnViewController: UIViewController, UICollectionViewDelegate, 
         collectionView.deselectItem(at: indexPath, animated: true)
         switch dataSource.itemIdentifier(for: indexPath) {
         case .rec(let id):
-            if let rec: Recommendation = object(id) { openDetail(rec.title) { collectionView.cellForItem(at: indexPath) } }
+            if let rec: Recommendation = object(id) { openDetail(rec.title) { [weak self] in self?.dataSource.indexPath(for: .rec(id)).flatMap { collectionView.cellForItem(at: $0) } } }
         case .friend(let id):
             guard let friend: Friend = object(id) else { return }
             if let share = Store.shared.share(for: friend) {
