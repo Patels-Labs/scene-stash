@@ -175,7 +175,7 @@ private final class WallBeat: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        shade.frame = bounds
+        shade.place(bounds)
     }
 
     func show(_ titles: [Title]) {

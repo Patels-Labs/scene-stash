@@ -38,6 +38,17 @@ extension UIView {
     }
 }
 
+extension CALayer {
+    /// Sizes a layer to its view without the implicit animation a bare layer gets, which otherwise shows
+    /// the layer growing out of the corner whenever a cell first lays out.
+    func place(_ frame: CGRect) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        self.frame = frame
+        CATransaction.commit()
+    }
+}
+
 extension UIViewController {
     func installBackdrop() {
         view.backgroundColor = Theme.bg

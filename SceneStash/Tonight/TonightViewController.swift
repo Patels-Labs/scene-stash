@@ -40,6 +40,8 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
     private var details: [Int: TitleDetail] = [:]
     private var upNext: [UpNext] = []
     private var programme: [Slot] = []
+    /// False until the first programme is worked out, so the hero doesn't offer "nothing on" while it loads.
+    private var planned = false
     private var upcoming: [Upcoming] = []
     private var trending: [Title] = []
     private var refreshTask: Task<Void, Never>?
@@ -145,6 +147,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             }
             upNext = next
             programme = buildProgramme()
+            planned = true
             Alerts.reschedule(Array(details.values))
 
             var soon: [Upcoming] = []
@@ -348,10 +351,11 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
             }
             cell.onSettings = { [weak self] in self?.present(UINavigationController(rootViewController: SettingsViewController()), animated: true) }
             cell.onTime = { [weak self] in self?.timeFit() }
-            cell.show(heroPages, suggestion: trending.first)
+            if planned { cell.show(heroPages, suggestion: trending.first) }
         }
         let nightReg = UICollectionView.CellRegistration<WideLockup, Item> { cell, _, item in
             guard case .night(let uuid) = item, let night = Store.shared.night(uuid: uuid) else { return }
+            Task { await HeroView.prepare(night.title) } // so the night's page opens on its finished art
             let when = (night.showtime ?? .now).formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
             let time = (night.showtime ?? .now).formatted(date: .omitted, time: .shortened)
             cell.configure(.init(backdrop: TMDB.imageURL(night.backdropPath ?? night.posterPath, .backdrop), title: night.name ?? "",
