@@ -260,7 +260,7 @@ final class WideLockup: UICollectionViewCell {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        shade.frame = art.bounds
+        shade.place(art.bounds)
     }
 
     func configure(_ m: Model) {
@@ -455,7 +455,7 @@ final class HeroView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        shade.frame = art.bounds
+        shade.place(art.bounds)
     }
 
     /// Shows the title's text-free art and logo. When they aren't downloaded yet the art stays empty until

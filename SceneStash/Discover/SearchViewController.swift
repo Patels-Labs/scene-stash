@@ -222,7 +222,7 @@ final class CategoryTile: UICollectionViewCell {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        shade.frame = art.bounds
+        shade.place(art.bounds)
     }
 
     func configure(_ title: String, poster: String?) {
