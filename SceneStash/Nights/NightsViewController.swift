@@ -205,21 +205,22 @@ final class NightFeatureCell: UICollectionViewCell {
     }
 
     func configure(_ night: MovieNight) {
+        Task { await HeroView.prepare(night.title) } // so the night's page opens on its finished art
         badge.text = night.status().label
         name.text = night.name
         defer { shownID = night.tmdbID }
         guard night.tmdbID != shownID else { return finish(night) }
-        art.show(TMDB.imageURL(night.posterPath, .hero), name: nil)
+        art.show(nil, name: nil)
         name.isHidden = false
         logo.isHidden = true
-        // Like the hero: swap to text-free art with the film's logo, so its own title isn't printed twice.
+        // Like the hero: text-free art with the film's logo, so its own title isn't printed twice. The art
+        // waits for it rather than showing the regular poster first and swapping.
         artTask?.cancel()
         artTask = Task { [weak self] in
             let artwork = await TMDB.shared.artwork(Int(night.tmdbID), .movie)
             guard !Task.isCancelled, let self else { return }
-            if let url = TMDB.imageURL(artwork.poster, .hero), let image = await ImageLoader.shared.image(url), !Task.isCancelled {
-                art.cancelImageLoad()
-                UIView.transition(with: art, duration: 0.3, options: .transitionCrossDissolve) { self.art.image = image }
+            if let url = TMDB.imageURL(artwork.poster ?? night.posterPath, .hero), let image = await ImageLoader.shared.image(url), !Task.isCancelled {
+                UIView.transition(with: art, duration: 0.25, options: .transitionCrossDissolve) { self.art.image = image }
             }
             guard let url = TMDB.imageURL(artwork.logo, .posterLarge), let image = await ImageLoader.shared.image(url), !Task.isCancelled else { return }
             logo.image = image

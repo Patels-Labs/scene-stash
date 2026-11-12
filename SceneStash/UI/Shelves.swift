@@ -406,7 +406,9 @@ final class HeroView: UIView {
     /// How far the buttons sit above the art's bottom edge; more when something else lives there.
     private(set) lazy var contentBottom = content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -20)
     /// Artwork that's already downloaded, so a hero can draw its finished state straight away.
-    private static var ready: [Title: TMDB.Artwork] = [:]
+    /// Keyed by type and id: the same title arrives from lists, nights and details with different extras filled in.
+    private static var ready: [String: TMDB.Artwork] = [:]
+    private static func id(_ t: Title) -> String { "\(t.mediaType.rawValue)/\(t.id)" }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -456,7 +458,8 @@ final class HeroView: UIView {
         shade.frame = art.bounds
     }
 
-    /// Shows the art and title, then swaps in text-free art and the title's logo once TMDB has them.
+    /// Shows the title's text-free art and logo. When they aren't downloaded yet the art stays empty until
+    /// they are, rather than showing the regular poster and swapping it out a moment later.
     func show(_ title: Title, poster: String? = nil, meta text: String?, size: ImageSize = .hero) {
         meta.text = text
         meta.isHidden = text == nil
@@ -470,32 +473,33 @@ final class HeroView: UIView {
         logo.isHidden = true
         logoTask?.cancel()
         // Downloaded already: draw the finished page, so swiping to it never shows the art changing.
-        if let artwork = Self.ready[title] {
+        if let artwork = Self.ready[Self.id(title)] {
             art.setImage(TMDB.imageURL(poster ?? artwork.poster ?? title.posterPath, size))
             if let url = TMDB.imageURL(artwork.logo, .posterLarge), let image = ImageLoader.shared.cached(url) { setLogo(image, title) }
             return
         }
-        art.setImage(TMDB.imageURL(poster ?? title.posterPath, size))
+        // An episode's still is the art whatever TMDB has; otherwise wait for the clean poster.
+        if let poster { art.setImage(TMDB.imageURL(poster, size)) } else { art.setImage(nil) }
         logoTask = Task { [weak self] in
-            let artwork = await TMDB.shared.artwork(title.id, title.mediaType)
-            guard !Task.isCancelled, let self else { return }
-            if poster == nil, let clean = TMDB.imageURL(artwork.poster, .hero), let image = await ImageLoader.shared.image(clean), !Task.isCancelled {
-                art.cancelImageLoad() // or the text-on poster, if it's slower, lands back over the clean one
-                UIView.transition(with: art, duration: 0.3, options: .transitionCrossDissolve) { self.art.image = image }
+            await Self.prepare(title)
+            guard !Task.isCancelled, let self, let artwork = Self.ready[Self.id(title)] else { return }
+            if poster == nil, let url = TMDB.imageURL(artwork.poster ?? title.posterPath, size) {
+                let image = await ImageLoader.shared.image(url)
+                guard !Task.isCancelled else { return }
+                UIView.transition(with: art, duration: 0.25, options: [.transitionCrossDissolve, .allowUserInteraction]) { self.art.image = image }
             }
-            guard let url = TMDB.imageURL(artwork.logo, .posterLarge), let image = await ImageLoader.shared.image(url), !Task.isCancelled else { return }
-            setLogo(image, title)
+            if let url = TMDB.imageURL(artwork.logo, .posterLarge), let image = ImageLoader.shared.cached(url) { setLogo(image, title) }
         }
     }
 
     /// Downloads a title's clean art and logo ahead of time, for heroes that aren't on screen yet.
     static func prepare(_ title: Title) async {
-        guard ready[title] == nil else { return }
+        guard ready[id(title)] == nil else { return }
         let artwork = await TMDB.shared.artwork(title.id, title.mediaType)
         for url in [TMDB.imageURL(artwork.poster, .hero), TMDB.imageURL(artwork.logo, .posterLarge)].compactMap({ $0 }) {
             _ = await ImageLoader.shared.image(url)
         }
-        ready[title] = artwork
+        ready[id(title)] = artwork
     }
 
     private func setLogo(_ image: UIImage, _ title: Title) {
