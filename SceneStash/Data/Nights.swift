@@ -211,24 +211,39 @@ extension Store {
 
     /// The share a night (or a friend) lives in, once it's been shared.
     func share(for object: NSManagedObject) -> CKShare? {
-        guard Self.cloudEnabled, !object.objectID.isTemporaryID else { return nil }
+        guard Self.cloudEnabled, sharesInFlight == 0, !object.objectID.isTemporaryID else { return nil }
         return (try? container.fetchShares(matching: [object.objectID]))?[object.objectID]
     }
 
     /// Moves the object into its own share zone and returns the share for the invite sheet.
-    func makeShare(for id: NSManagedObjectID, title: String) async throws -> CKShare {
+    func makeShare(for id: NSManagedObjectID, title: String, thumbnail: Data?) async throws -> CKShare {
         let object = try context.existingObject(with: id)
+        sharesInFlight += 1
+        defer { sharesInFlight -= 1 }
         let (_, share, _) = try await container.share([object], to: nil)
         share[CKShare.SystemFieldKey.title] = title
+        share[CKShare.SystemFieldKey.thumbnailImageData] = thumbnail
         share.publicPermission = .none
-        return share
+        // Saved back to iCloud, or the invite and the people sheet show a blank document with no name.
+        guard let privateStore else { return share }
+        return (try? await container.persistUpdatedShare(share, in: privateStore)) ?? share
+    }
+
+    /// After Stop Sharing or leaving: removes the share's zone and everything in it, here and in iCloud.
+    /// Without this the object lingers in a zone whose share is gone.
+    func purge(_ share: CKShare) async {
+        let zone = share.recordID.zoneID
+        guard let store = zone.ownerName == CKCurrentUserDefaultName ? privateStore : sharedStore else { return }
+        do { _ = try await container.purgeObjectsAndRecordsInZone(with: zone, in: store) } catch { print("Couldn't purge share zone: \(error)") }
+        context.refreshAllObjects()
     }
 
     /// Called when you tap someone's invite link.
     func accept(_ metadata: CKShare.Metadata) {
         guard let sharedStore else { return }
-        container.acceptShareInvitations(from: [metadata], into: sharedStore) { _, error in
-            if let error { print("Couldn't accept share: \(error)") }
+        // async, not the completion handler: that one is called off the main thread, which traps under MainActor isolation.
+        Task {
+            do { _ = try await container.acceptShareInvitations(from: [metadata], into: sharedStore) } catch { print("Couldn't accept share: \(error)") }
         }
     }
 

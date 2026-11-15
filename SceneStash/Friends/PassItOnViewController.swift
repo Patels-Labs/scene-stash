@@ -134,7 +134,7 @@ final class RecommendViewController: UIViewController {
         guard Store.cloudEnabled else { return }
         Haptics.tap()
         let friend = Store.shared.newFriend()
-        invite(friend, title: "Pass It On in Scene Stash", from: people.arrangedSubviews.last)
+        invite(friend, title: "Pass It On in Scene Stash", from: people.arrangedSubviews.last, discardOnFailure: true) { [weak self] busy in if !busy { self?.render() } }
     }
 
     private func sendIt() {
@@ -155,6 +155,7 @@ final class PassItOnViewController: UIViewController, UICollectionViewDelegate, 
         var c = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
         c.backgroundColor = .clear
         c.headerMode = self?.dataSource?.sectionIdentifier(for: index) == .hits ? .none : .supplementary
+        c.footerMode = self?.dataSource?.sectionIdentifier(for: index) == .friends ? .supplementary : .none
         return NSCollectionLayoutSection.list(using: c, layoutEnvironment: env)
     })
     private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
@@ -182,7 +183,14 @@ final class PassItOnViewController: UIViewController, UICollectionViewDelegate, 
             header.contentConfiguration = c
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { cv, ip, item in cv.dequeueConfiguredReusableCell(using: cellReg, for: ip, item: item) }
-        dataSource.supplementaryViewProvider = { cv, _, ip in cv.dequeueConfiguredReusableSupplementary(using: headerReg, for: ip) }
+        let footerReg = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { footer, _, _ in
+            var c = UIListContentConfiguration.footer()
+            c.text = "Invite a friend, then choose Recommend to a Friend on any film or show to pass it on with a note. When they've watched it, their rating comes back to you here."
+            footer.contentConfiguration = c
+        }
+        dataSource.supplementaryViewProvider = { cv, kind, ip in
+            kind == UICollectionView.elementKindSectionFooter ? cv.dequeueConfiguredReusableSupplementary(using: footerReg, for: ip) : cv.dequeueConfiguredReusableSupplementary(using: headerReg, for: ip)
+        }
         reload()
         NotificationCenter.default.addObserver(self, selector: #selector(reload), name: .NSManagedObjectContextObjectsDidChange, object: Store.shared.context)
     }
@@ -256,15 +264,25 @@ final class PassItOnViewController: UIViewController, UICollectionViewDelegate, 
                 controller.delegate = self
                 present(controller, animated: true)
             } else {
-                invite(friend, title: "Pass It On in Scene Stash", from: collectionView.cellForItem(at: indexPath))
+                invite(friend, title: "Pass It On in Scene Stash", from: collectionView.cellForItem(at: indexPath)) { [weak self] busy in if !busy { self?.reload() } }
             }
         case .invite:
             guard Store.cloudEnabled else { return }
-            invite(Store.shared.newFriend(), title: "Pass It On in Scene Stash", from: collectionView.cellForItem(at: indexPath))
+            invite(Store.shared.newFriend(), title: "Pass It On in Scene Stash", from: collectionView.cellForItem(at: indexPath), discardOnFailure: true) { [weak self] busy in if !busy { self?.reload() } }
         default: break
         }
     }
 
     func itemTitle(for csc: UICloudSharingController) -> String? { "Pass It On" }
+    func itemThumbnailData(for csc: UICloudSharingController) -> Data? { UIImage(named: "Preview-AppIcon")?.jpegData(compressionQuality: 0.8) }
     func cloudSharingController(_ csc: UICloudSharingController, failedToSaveShareWithError error: Error) { showError(error) }
+
+    /// A friend is nothing but their share: stopping it (or leaving theirs) removes them and what you passed each other.
+    func cloudSharingControllerDidStopSharing(_ csc: UICloudSharingController) {
+        guard let share = csc.share else { return }
+        Task {
+            await Store.shared.purge(share)
+            reload()
+        }
+    }
 }
