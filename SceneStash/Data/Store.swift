@@ -215,6 +215,8 @@ final class Store {
 
     @discardableResult
     func track(_ title: Title, status: TrackStatus, runtime: Int? = nil) -> Tracked {
+        // Not out yet: it can only be wanted, not watched.
+        let status = title.unreleased ? .watchlist : status
         let item = tracked(title.id, title.mediaType) ?? {
             let t = Tracked(context: context)
             t.tmdbID = Int64(title.id)

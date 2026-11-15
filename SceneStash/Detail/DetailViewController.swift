@@ -218,14 +218,14 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
     private func statusMenu() -> UIMenu {
         let title = detail?.title ?? item
         let current = tracked?.status
-        let statuses = TrackStatus.allCases.filter { $0 != .watching || !title.unreleased }
+        let statuses: [TrackStatus] = title.unreleased ? [.watchlist] : TrackStatus.allCases
         var actions: [UIMenuElement] = statuses.map { s in
             UIAction(title: s.label, image: UIImage(systemName: s.symbol), state: current == s ? .on : .off) { [weak self] _ in
                 Store.shared.track(title, status: s, runtime: self?.detail?.runtime)
                 Haptics.success()
             }
         }
-        actions.append(UIAction(title: "Remove from Library", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in
+        actions.append(UIAction(title: title.unreleased ? "Remove from Watchlist" : "Remove from Library", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in
             Store.shared.remove(title)
         })
         return UIMenu(children: actions)

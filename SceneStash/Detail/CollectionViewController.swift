@@ -213,6 +213,7 @@ final class OrderCell: UICollectionViewCell {
             : UIImage(systemName: "circle", withConfiguration: Self.tickSize)
         tick.setImage(image, for: .normal)
         tick.tintColor = seen ? nil : Theme.secondary
+        tick.isHidden = t.unreleased
         contentView.alpha = seen ? 0.6 : 1
         accessibilityLabel = [part.text, t.name, meta.text, seen ? "watched" : nil].compactMap { $0 }.joined(separator: ", ")
         accessibilityCustomActions = [UIAccessibilityCustomAction(name: seen ? "Mark as Not Watched" : "Mark as Watched") { [weak self] _ in self?.onTick?(); return true }]
