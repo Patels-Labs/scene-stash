@@ -71,14 +71,14 @@ extension UIViewController {
     func titleMenu(_ title: Title) -> UIContextMenuConfiguration {
         UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in
             let current = Store.shared.tracked(title.id, title.mediaType)?.status
-            var actions: [UIMenuElement] = TrackStatus.allCases.filter { $0 != .watching || !title.unreleased }.map { status in
+            var actions: [UIMenuElement] = (title.unreleased ? [.watchlist] : TrackStatus.allCases).map { status in
                 UIAction(title: status.label, image: UIImage(systemName: status.symbol), state: current == status ? .on : .off) { _ in
                     Store.shared.track(title, status: status)
                     Haptics.success()
                 }
             }
             if current != nil {
-                actions.append(UIAction(title: "Remove from Library", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in
+                actions.append(UIAction(title: title.unreleased ? "Remove from Watchlist" : "Remove from Library", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in
                     Store.shared.remove(title)
                 })
             }
