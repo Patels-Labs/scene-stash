@@ -2,7 +2,7 @@ DEFINE SCHEMA
 
     // The record types NSPersistentCloudKitContainer mirrors Store.model into: entity Foo becomes CD_Foo and
     // attribute bar becomes CD_bar. Strings and binary data can spill into a CD_<name>_ckAsset when large.
-    // Change this alongside Store.model, import it to Development (CKTool), then Deploy Schema Changes in
+    // Change this alongside Store.model, import it to Development (node scripts/cloudkit-import.mjs), then Deploy Schema Changes in
     // CloudKit Console; TestFlight and App Store builds only sync against the deployed Production schema.
 
     RECORD TYPE CD_Tracked (
