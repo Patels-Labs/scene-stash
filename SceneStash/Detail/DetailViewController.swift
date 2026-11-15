@@ -542,7 +542,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         case .series:
             guard let series = detail?.collection else { return }
             Haptics.tap()
-            let page = CollectionViewController(id: series.id, name: series.name, backdrop: series.backdrop)
+            let page = CollectionViewController(id: series.id, name: series.name, poster: series.poster, backdrop: series.backdrop)
             page.preferredTransition = .zoom { [weak self] _ in
                 self?.dataSource.indexPath(for: selected).flatMap { collectionView.cellForItem(at: $0) }
             }
