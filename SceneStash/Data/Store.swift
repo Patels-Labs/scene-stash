@@ -168,6 +168,9 @@ final class Store {
         }
     }
 
+    /// Shares being made right now. Looking a share up while one is mid-move deadlocks the main thread.
+    var sharesInFlight = 0
+
     /// The latest finished sync with iCloud and its error, if it failed. Shown in Settings.
     private(set) var lastSync: (date: Date, error: String?)?
 

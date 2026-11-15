@@ -511,7 +511,18 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
         showError(error)
     }
 
-    func cloudSharingControllerDidStopSharing(_ csc: UICloudSharingController) { render() }
+    func itemThumbnailData(for csc: UICloudSharingController) -> Data? {
+        TMDB.imageURL(night.posterPath, .poster).flatMap(ImageLoader.shared.cached)?.jpegData(compressionQuality: 0.7)
+    }
+
+    func cloudSharingControllerDidStopSharing(_ csc: UICloudSharingController) {
+        // Stopping your own night keeps it, unshared. Leaving someone else's takes it off this device.
+        guard night.isGuest, let share = csc.share else { render(); return }
+        Task {
+            await Store.shared.purge(share)
+            navigationController?.popViewController(animated: true)
+        }
+    }
 }
 
 /// One stage of the night: a bar that fills as the evening moves on, with its name and when.
@@ -675,7 +686,8 @@ private final class ReactionRow: UIView {
 extension UIViewController {
     /// Opens the invite sheet for a night or a friend, making its iCloud share first if it hasn't one.
     /// `busy` is true while the share is being made.
-    func invite(_ object: NSManagedObject, title: String, from sender: UIView?, busy: @escaping (Bool) -> Void = { _ in }) {
+    /// `discardOnFailure` deletes the object if its share can't be made, for a friend created just for this invite.
+    func invite(_ object: NSManagedObject, title: String, from sender: UIView?, discardOnFailure: Bool = false, busy: @escaping (Bool) -> Void = { _ in }) {
         if let share = Store.shared.share(for: object) { presentInvite(share, from: sender); return }
         // Make the share before the sheet opens: creating it from inside the sheet hid the real error and could hang.
         busy(true)
@@ -683,8 +695,13 @@ extension UIViewController {
         Task {
             defer { busy(false) }
             do {
-                presentInvite(try await Store.shared.makeShare(for: id, title: title), from: sender)
+                var thumbnail = UIImage(named: "Preview-AppIcon")?.jpegData(compressionQuality: 0.8)
+                if let url = TMDB.imageURL((object as? MovieNight)?.posterPath, .poster), let poster = await ImageLoader.shared.image(url) {
+                    thumbnail = poster.jpegData(compressionQuality: 0.7)
+                }
+                presentInvite(try await Store.shared.makeShare(for: id, title: title, thumbnail: thumbnail), from: sender)
             } catch {
+                if discardOnFailure { Store.shared.delete(object) }
                 let ns = error as NSError
                 let underlying = (ns.userInfo[NSUnderlyingErrorKey] as? NSError).map { "\n\($0.localizedDescription) (\($0.domain) \($0.code))" } ?? ""
                 let alert = UIAlertController(title: "Couldn't create the invite",
