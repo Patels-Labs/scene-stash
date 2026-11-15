@@ -56,6 +56,8 @@ final class WatchSession {
     }
 
     func start(_ title: Title, runtime: Int, from seconds: Int, stinger: Bool, episode: EpisodeKey? = nil) async {
+        // Nothing to keep time against before it's out.
+        if episode == nil, title.unreleased { return }
         await stop()
         var tint = "F5B544"
         if let url = TMDB.imageURL(title.posterPath, .poster) {
@@ -93,6 +95,7 @@ final class WatchSession {
     /// Marks the film or episode seen and lets the activity show a last "finished" frame before it goes.
     func finish() async {
         guard let s = state else { return }
+        state = nil
         if let key = s.key {
             Store.shared.setWatched([key], watched: true, show: s.title, runtime: s.runtime)
         } else {
@@ -106,12 +109,12 @@ final class WatchSession {
             await activity.end(.init(state: final, staleDate: nil), dismissalPolicy: .after(.now.addingTimeInterval(10 * 60)))
         }
         #endif
-        state = nil
     }
 
-    /// Ends tracking without marking anything (another film started, or the film was un-tracked).
-    func stop() async {
-        savePosition()
+    /// Ends tracking without marking anything: another film started, or it left Watching (then `saving` is
+    /// false, so the place isn't written back and the film doesn't slip back into Watching).
+    func stop(saving: Bool = true) async {
+        if saving { savePosition() }
         #if !targetEnvironment(macCatalyst)
         for activity in Activity<NowShowingAttributes>.activities { await activity.end(nil, dismissalPolicy: .immediate) }
         #endif

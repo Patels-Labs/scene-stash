@@ -154,7 +154,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
                 primary.configuration?.title = resume ? "Resume" : again ? "Watch Again" : "Start Watching"
                 primary.configuration?.image = UIImage(systemName: again ? "arrow.counterclockwise" : "play.fill")
             }
-            primary.isHidden = (d?.runtime ?? 0) == 0 && live == nil
+            primary.isHidden = ((d?.runtime ?? 0) == 0 || (d?.title ?? item).unreleased) && live == nil
             let planned = Store.shared.nights(for: item).contains { $0.status() != .creditsRolled }
             secondary.configuration?.title = planned ? "Your Night Out" : "Plan a Night Out"
             secondary.configuration?.image = UIImage(systemName: "person.2.fill")
@@ -218,10 +218,10 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
     private func statusMenu() -> UIMenu {
         let title = detail?.title ?? item
         let current = tracked?.status
-        var actions: [UIMenuElement] = TrackStatus.allCases.map { s in
+        let statuses = TrackStatus.allCases.filter { $0 != .watching || !title.unreleased }
+        var actions: [UIMenuElement] = statuses.map { s in
             UIAction(title: s.label, image: UIImage(systemName: s.symbol), state: current == s ? .on : .off) { [weak self] _ in
                 Store.shared.track(title, status: s, runtime: self?.detail?.runtime)
-                if s == .seen, WatchSession.shared.isWatching(title.id) { Task { await WatchSession.shared.finish() } }
                 Haptics.success()
             }
         }
@@ -497,7 +497,8 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         snap.appendSections([.hero])
         snap.appendItems([.hero])
         let status = tracked?.status
-        if item.mediaType == .movie, (detail?.runtime ?? 0) > 0, status != .seen || live != nil {
+        // Only while it's actually being watched: started, or moved to Watching. Never before it's out.
+        if item.mediaType == .movie, let detail, (detail.runtime ?? 0) > 0, !detail.title.unreleased, status == .watching || live != nil {
             snap.appendSections([.progress]); snap.appendItems([.progress])
         }
         if let d = detail, d.midCredits || d.afterCredits {
