@@ -209,33 +209,79 @@ extension Store {
 
     var cloudContainer: CKContainer { CKContainer(identifier: Self.containerID) }
 
-    /// The share a night (or a friend) lives in, once it's been shared.
-    func share(for object: NSManagedObject) -> CKShare? {
-        guard Self.cloudEnabled, sharesInFlight == 0, !object.objectID.isTemporaryID else { return nil }
-        return (try? container.fetchShares(matching: [object.objectID]))?[object.objectID]
+    /// The share a night lives in, once it's been shared. Core Data's own lookup is synchronous and waits on
+    /// the sync engine, so it's only ever asked off the main thread, by refreshShares().
+    func share(for night: NSManagedObject) -> CKShare? { shares[night.objectID] }
+
+    func refreshShares() {
+        guard Self.cloudEnabled else { return }
+        let ids = nights().map(\.objectID).filter { !$0.isTemporaryID }
+        Task {
+            shares = await offMain { [container] in (try? container.fetchShares(matching: ids)) ?? [:] }
+            NotificationCenter.default.post(name: .sharesChanged, object: nil)
+        }
     }
 
-    /// Moves the object into its own share zone and returns the share for the invite sheet.
-    func makeShare(for id: NSManagedObjectID, title: String, thumbnail: Data?) async throws -> CKShare {
-        let object = try context.existingObject(with: id)
-        sharesInFlight += 1
-        defer { sharesInFlight -= 1 }
-        let (_, share, _) = try await container.share([object], to: nil)
-        share[CKShare.SystemFieldKey.title] = title
+    /// The share zone a night's record sits in, or nil while it's an ordinary night in your library.
+    private func shareZone(of night: MovieNight) async -> CKRecordZone.ID? {
+        let id = night.objectID
+        var zone = shares[id]?.recordID.zoneID
+        if zone == nil { zone = await offMain { [container] in container.recordID(for: id)?.zoneID } }
+        return zone.flatMap { $0.zoneName.hasPrefix("com.apple.coredata.cloudkit.share.") ? $0 : nil }
+    }
+
+    /// The night's share as iCloud has it now, or nil if it isn't shared. Core Data can't be trusted here:
+    /// it never hears about Stop Sharing and goes on handing back the dead share.
+    func liveShare(for night: MovieNight) async throws -> CKShare? {
+        guard let zone = await shareZone(of: night) else { return nil }
+        let id = shares[night.objectID]?.recordID ?? CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zone)
+        let database = zone.ownerName == CKCurrentUserDefaultName ? cloudContainer.privateCloudDatabase : cloudContainer.sharedCloudDatabase
+        do {
+            return try await database.record(for: id) as? CKShare
+        } catch let error as CKError where error.code == .unknownItem || error.code == .zoneNotFound {
+            return nil
+        }
+    }
+
+    /// Shares a night that isn't shared, moving it into a zone of its own. `reclaim` it first if it ever was.
+    func newShare(for night: MovieNight, thumbnail: Data?) async throws -> CKShare {
+        let (_, share, _) = try await container.share([night], to: nil)
+        share[CKShare.SystemFieldKey.title] = "Movie night: \(night.name ?? "a film")"
         share[CKShare.SystemFieldKey.thumbnailImageData] = thumbnail
         share.publicPermission = .none
         // Saved back to iCloud, or the invite and the people sheet show a blank document with no name.
-        guard let privateStore else { return share }
-        return (try? await container.persistUpdatedShare(share, in: privateStore)) ?? share
+        let saved = try? await persist(share)
+        refreshShares()
+        return saved ?? share
     }
 
-    /// After Stop Sharing or leaving: removes the share's zone and everything in it, here and in iCloud.
-    /// Without this the object lingers in a zone whose share is gone.
-    func purge(_ share: CKShare) async {
-        let zone = share.recordID.zoneID
-        guard let store = zone.ownerName == CKCurrentUserDefaultName ? privateStore : sharedStore else { return }
-        do { _ = try await container.purgeObjectsAndRecordsInZone(with: zone, in: store) } catch { print("Couldn't purge share zone: \(error)") }
-        context.refreshAllObjects()
+    /// Tells Core Data about a change the system's sharing sheet made to a share.
+    @discardableResult
+    func persist(_ share: CKShare) async throws -> CKShare {
+        let mine = share.recordID.zoneID.ownerName == CKCurrentUserDefaultName
+        guard let store = mine ? privateStore : sharedStore else { return share }
+        return try await container.persistUpdatedShare(share, in: store)
+    }
+
+    /// Brings a night whose sharing was stopped back into your library. Core Data can't move a record out of a
+    /// share zone or share it again from there, so the night, its notes and photos are copied, the originals
+    /// deleted in the same save, and the dead zone dropped. A night that was never shared comes back as it is.
+    func reclaim(_ night: MovieNight) async -> MovieNight {
+        guard !night.isGuest, let privateStore, let zone = await shareZone(of: night) else { return night }
+        func copy<T: NSManagedObject>(_ object: T) -> T {
+            let twin = NSManagedObject(entity: object.entity, insertInto: context) as! T
+            context.assign(twin, to: privateStore)
+            for key in object.entity.attributesByName.keys { twin.setValue(object.value(forKey: key), forKey: key) }
+            return twin
+        }
+        let twin = copy(night)
+        night.notes?.forEach { copy($0).night = twin }
+        night.photos?.forEach { copy($0).night = twin }
+        shares[night.objectID] = nil
+        context.delete(night)
+        save()
+        do { _ = try await container.purgeObjectsAndRecordsInZone(with: zone, in: privateStore) } catch { print("Couldn't drop share zone: \(error)") }
+        return twin
     }
 
     /// Called when you tap someone's invite link.
@@ -244,7 +290,16 @@ extension Store {
         // async, not the completion handler: that one is called off the main thread, which traps under MainActor isolation.
         Task {
             do { _ = try await container.acceptShareInvitations(from: [metadata], into: sharedStore) } catch { print("Couldn't accept share: \(error)") }
+            refreshShares()
         }
+    }
+
+    /// Pass It On was removed; this clears out what it stored, including anything still arriving from iCloud.
+    func retireFriends() {
+        for entity in ["Recommendation", "Friend"] {
+            (try? context.fetch(NSFetchRequest<NSManagedObject>(entityName: entity)))?.forEach(context.delete)
+        }
+        save()
     }
 
     /// Everyone on the night's share, the planner first. Just you when it isn't shared yet.
@@ -292,4 +347,9 @@ extension Prefs {
         get { Set(UserDefaults.standard.stringArray(forKey: "stashedNights") ?? []) }
         set { UserDefaults.standard.set(Array(newValue), forKey: "stashedNights") }
     }
+}
+
+/// Runs blocking work away from the main thread.
+nonisolated func offMain<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+    await Task.detached(operation: work).value
 }

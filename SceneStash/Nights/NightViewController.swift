@@ -6,9 +6,11 @@ import UIKit
 /// One night out, Apple TV-style: the film's art and logo with Directions and Invite Friends, then where the
 /// evening's got to, your ticket, who's going, and once it's finished, everyone's reactions.
 final class NightViewController: UIViewController, UICloudSharingControllerDelegate, PHPickerViewControllerDelegate {
-    private let night: MovieNight
+    private var night: MovieNight
     private var clock: Timer?
+    /// True while the night is being shared or brought back from a stopped share, when it can be swapped for a copy.
     private var creatingShare = false
+    private var left = false
 
     private let hero = HeroView()
     private let primary = CapsuleButton.primary("Directions", image: "location.fill")
@@ -87,6 +89,7 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
 
         render()
         NotificationCenter.default.addObserver(self, selector: #selector(storeChanged), name: .NSManagedObjectContextObjectsDidChange, object: Store.shared.context)
+        NotificationCenter.default.addObserver(self, selector: #selector(storeChanged), name: .sharesChanged, object: nil)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -102,11 +105,10 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
     }
 
     @objc private func storeChanged() {
+        // Sharing fires a burst of changes and can swap the night for a copy; wait until it's done.
+        guard !creatingShare, !left else { return }
         // A friend deleted the night, or you left it.
         guard !night.isDeleted, night.managedObjectContext != nil else { navigationController?.popViewController(animated: true); return }
-        // Sharing moves the night into its own zone and fires a burst of changes; looking up the share
-        // mid-move can block, so wait until it's done.
-        guard !creatingShare else { return }
         render()
     }
 
@@ -489,39 +491,93 @@ final class NightViewController: UIViewController, UICloudSharingControllerDeleg
             present(alert, animated: true)
             return
         }
-        invite(night, title: "Movie night: \(night.name ?? "a film")", from: sender) { [weak self] busy in
-            guard let self else { return }
-            creatingShare = busy
-            invite.configuration?.showsActivityIndicator = busy
-            invite.isEnabled = !busy
-            if !busy { render() }
+        sharing(failure: "Couldn't create the invite") { [self] in
+            var thumbnail: Data?
+            if let url = TMDB.imageURL(night.posterPath, .poster) { thumbnail = await ImageLoader.shared.image(url)?.jpegData(compressionQuality: 0.7) }
+            var share = try await Store.shared.liveShare(for: night)
+            if share == nil {
+                // Adopted before sharing, so a failure below still leaves this page on a night that exists.
+                night = await Store.shared.reclaim(night)
+                share = try await Store.shared.newShare(for: night, thumbnail: thumbnail)
+            }
+            guard let share else { return }
+            let provider = NSItemProvider()
+            // Read and write for everyone; you choose whether it's only people you add or anyone with the link.
+            let options = CKAllowedSharingOptions(allowedParticipantPermissionOptions: .readWrite, allowedParticipantAccessOptions: .any)
+            provider.registerCKShare(share, container: Store.shared.cloudContainer, allowedSharingOptions: options)
+            let sheet = UIActivityViewController(activityItemsConfiguration: UIActivityItemsConfiguration(itemProviders: [provider]))
+            sheet.popoverPresentationController?.sourceView = sender
+            present(sheet, animated: true)
         }
     }
 
     private func managePeople() {
-        guard let share = Store.shared.share(for: night) else { return }
-        let controller = UICloudSharingController(share: share, container: Store.shared.cloudContainer)
-        controller.delegate = self
-        present(controller, animated: true)
+        sharing(failure: "Couldn't load the people on this night") { [self] in
+            // Asked of iCloud each time, so the list is current and a share stopped elsewhere isn't shown as live.
+            guard let share = try await Store.shared.liveShare(for: night) else { await stopped(); return }
+            let controller = UICloudSharingController(share: share, container: Store.shared.cloudContainer)
+            controller.delegate = self
+            present(controller, animated: true)
+        }
+    }
+
+    /// Runs a sharing step with the Invite button busy, and says so if it fails or iCloud never answers.
+    private func sharing(failure: String, _ work: @escaping () async throws -> Void) {
+        creatingShare = true
+        invite.configuration?.showsActivityIndicator = true
+        invite.isEnabled = false
+        var finished = false
+        let finish = { [weak self] (error: Error?) in
+            guard let self, !finished else { return }
+            finished = true
+            creatingShare = false
+            invite.configuration?.showsActivityIndicator = false
+            invite.isEnabled = true
+            storeChanged()
+            guard let error else { return }
+            let ns = error as NSError
+            let alert = UIAlertController(title: failure, message: "\(ns.localizedDescription) (\(ns.domain) \(ns.code))", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+            present(alert, animated: true)
+        }
+        Task {
+            do { try await work(); finish(nil) } catch { finish(error) }
+        }
+        // Core Data's sharing calls can't be cancelled and have been seen never to return.
+        Task {
+            try? await Task.sleep(for: .seconds(45))
+            finish(CKError(.serverResponseLost, userInfo: [NSLocalizedDescriptionKey: "iCloud didn't answer. Check your connection and try again."]))
+        }
+    }
+
+    /// The night's share has ended: your own night comes back into your library, someone else's leaves this device.
+    private func stopped() async {
+        // Someone else's night goes at the next sync; nothing here should keep showing it.
+        if night.isGuest { left = true; navigationController?.popViewController(animated: true); return }
+        night = await Store.shared.reclaim(night)
+        Store.shared.refreshShares()
     }
 
     func itemTitle(for csc: UICloudSharingController) -> String? { night.name }
-
-    func cloudSharingController(_ csc: UICloudSharingController, failedToSaveShareWithError error: Error) {
-        showError(error)
-    }
 
     func itemThumbnailData(for csc: UICloudSharingController) -> Data? {
         TMDB.imageURL(night.posterPath, .poster).flatMap(ImageLoader.shared.cached)?.jpegData(compressionQuality: 0.7)
     }
 
-    func cloudSharingControllerDidStopSharing(_ csc: UICloudSharingController) {
-        // Stopping your own night keeps it, unshared. Leaving someone else's takes it off this device.
-        guard night.isGuest, let share = csc.share else { render(); return }
+    func cloudSharingController(_ csc: UICloudSharingController, failedToSaveShareWithError error: Error) {
+        showError(error)
+    }
+
+    func cloudSharingControllerDidSaveShare(_ csc: UICloudSharingController) {
+        guard let share = csc.share else { return }
         Task {
-            await Store.shared.purge(share)
-            navigationController?.popViewController(animated: true)
+            _ = try? await Store.shared.persist(share)
+            Store.shared.refreshShares()
         }
+    }
+
+    func cloudSharingControllerDidStopSharing(_ csc: UICloudSharingController) {
+        sharing(failure: "Couldn't finish stopping sharing") { [self] in await stopped() }
     }
 }
 
@@ -681,46 +737,6 @@ private final class ReactionRow: UIView {
         accessibilityLabel = [name, line, rating > 0 ? "rated \(rating)" : nil].compactMap { $0 }.joined(separator: ", ")
     }
     required init?(coder: NSCoder) { fatalError() }
-}
-
-extension UIViewController {
-    /// Opens the invite sheet for a night or a friend, making its iCloud share first if it hasn't one.
-    /// `busy` is true while the share is being made.
-    /// `discardOnFailure` deletes the object if its share can't be made, for a friend created just for this invite.
-    func invite(_ object: NSManagedObject, title: String, from sender: UIView?, discardOnFailure: Bool = false, busy: @escaping (Bool) -> Void = { _ in }) {
-        if let share = Store.shared.share(for: object) { presentInvite(share, from: sender); return }
-        // Make the share before the sheet opens: creating it from inside the sheet hid the real error and could hang.
-        busy(true)
-        let id = object.objectID
-        Task {
-            defer { busy(false) }
-            do {
-                var thumbnail = UIImage(named: "Preview-AppIcon")?.jpegData(compressionQuality: 0.8)
-                if let url = TMDB.imageURL((object as? MovieNight)?.posterPath, .poster), let poster = await ImageLoader.shared.image(url) {
-                    thumbnail = poster.jpegData(compressionQuality: 0.7)
-                }
-                presentInvite(try await Store.shared.makeShare(for: id, title: title, thumbnail: thumbnail), from: sender)
-            } catch {
-                if discardOnFailure { Store.shared.delete(object) }
-                let ns = error as NSError
-                let underlying = (ns.userInfo[NSUnderlyingErrorKey] as? NSError).map { "\n\($0.localizedDescription) (\($0.domain) \($0.code))" } ?? ""
-                let alert = UIAlertController(title: "Couldn't create the invite",
-                                              message: "\(ns.localizedDescription) (\(ns.domain) \(ns.code))\(underlying)", preferredStyle: .alert)
-                alert.addAction(UIAlertAction(title: "OK", style: .default))
-                present(alert, animated: true)
-            }
-        }
-    }
-
-    private func presentInvite(_ share: CKShare, from sender: UIView?) {
-        let provider = NSItemProvider()
-        // Read and write for everyone; you choose whether it's only people you add or anyone with the link.
-        let options = CKAllowedSharingOptions(allowedParticipantPermissionOptions: .readWrite, allowedParticipantAccessOptions: .any)
-        provider.registerCKShare(share, container: Store.shared.cloudContainer, allowedSharingOptions: options)
-        let sheet = UIActivityViewController(activityItemsConfiguration: UIActivityItemsConfiguration(itemProviders: [provider]))
-        sheet.popoverPresentationController?.sourceView = sender
-        present(sheet, animated: true)
-    }
 }
 
 /// A photo from the night, with who took it on a frosted label.
