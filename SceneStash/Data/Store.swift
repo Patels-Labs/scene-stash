@@ -1,3 +1,4 @@
+import CloudKit
 import CoreData
 import UIKit
 
@@ -113,6 +114,7 @@ final class Marathon: NSManagedObject {
 
 extension Notification.Name {
     static let syncChanged = Notification.Name("syncChanged")
+    static let sharesChanged = Notification.Name("sharesChanged")
 }
 
 /// The user's library. Core Data mirrored to iCloud; views observe
@@ -157,19 +159,22 @@ final class Store {
         sharedStore = container.persistentStoreCoordinator.persistentStore(for: sharedURL)
         context.automaticallyMergesChangesFromParent = true
         context.mergePolicy = NSMergePolicy.mergeByPropertyObjectTrump
-        NotificationCenter.default.addObserver(forName: NSPersistentCloudKitContainer.eventChangedNotification, object: container, queue: .main) { note in
+        // No queue: with `.main` the sync engine waits for the main thread to take each event, and froze the app
+        // whenever the main thread was itself waiting on the sync engine.
+        NotificationCenter.default.addObserver(forName: NSPersistentCloudKitContainer.eventChangedNotification, object: container, queue: nil) { note in
             guard let event = note.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey] as? NSPersistentCloudKitContainer.Event,
                   let ended = event.endDate else { return }
             let error = event.error?.localizedDescription
-            MainActor.assumeIsolated {
+            Task { @MainActor in
                 Store.shared.lastSync = (ended, error)
                 NotificationCenter.default.post(name: .syncChanged, object: nil)
+                Store.shared.refreshShares()
             }
         }
     }
 
-    /// Shares being made right now. Looking a share up while one is mid-move deadlocks the main thread.
-    var sharesInFlight = 0
+    /// Each shared night's iCloud share, kept by refreshShares() so views never ask Core Data on the main thread.
+    var shares: [NSManagedObjectID: CKShare] = [:]
 
     /// The latest finished sync with iCloud and its error, if it failed. Shown in Settings.
     private(set) var lastSync: (date: Date, error: String?)?
@@ -256,7 +261,6 @@ final class Store {
         let item = tracked(title.id, title.mediaType) ?? track(title, status: .seen)
         item.rating = Int16(rating)
         mirrorToNights(title)
-        mirrorToFriends(title)
         save()
     }
 
@@ -281,7 +285,6 @@ final class Store {
         let trimmed = note?.trimmingCharacters(in: .whitespacesAndNewlines)
         item.note = trimmed?.isEmpty == false ? trimmed : nil
         mirrorToNights(title)
-        mirrorToFriends(title)
         save()
     }
 
@@ -487,12 +490,12 @@ final class Store {
             attr("uuid", .stringAttributeType), attr("authorID", .stringAttributeType), attr("authorName", .stringAttributeType),
             image, attr("createdAt", .dateAttributeType), photoNight,
         ]
+        // Pass It On is gone. Its two entities stay in the model, unused, so stores and iCloud records made by
+        // earlier builds still open; retireFriends() empties them.
         let friend = NSEntityDescription()
         friend.name = "Friend"
-        friend.managedObjectClassName = NSStringFromClass(Friend.self)
         let rec = NSEntityDescription()
         rec.name = "Recommendation"
-        rec.managedObjectClassName = NSStringFromClass(Recommendation.self)
         let (recs, recFriend) = children("recs", of: friend, rec, back: "friend")
         friend.properties = [attr("uuid", .stringAttributeType), attr("createdAt", .dateAttributeType), recs]
         rec.properties = [

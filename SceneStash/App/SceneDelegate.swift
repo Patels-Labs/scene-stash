@@ -24,6 +24,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         Task { await Store.shared.backfillRuntimes() }
         self.window = window
         Task { await Store.shared.loadIdentity() }
+        Store.shared.retireFriends()
+        Store.shared.refreshShares()
         if let metadata = connectionOptions.cloudKitShareMetadata { Store.shared.accept(metadata) }
         if let url = connectionOptions.urlContexts.first?.url, Prefs.onboarded { DispatchQueue.main.async { self.open(url) } }
         if !Prefs.onboarded {
