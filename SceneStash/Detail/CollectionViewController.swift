@@ -15,11 +15,11 @@ final class CollectionViewController: UIViewController, UICollectionViewDelegate
     private lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: makeLayout())
     private var dataSource: UICollectionViewDiffableDataSource<Int, Item>!
 
-    init(id: Int, name: String, backdrop: String?) {
+    init(id: Int, name: String, poster: String?, backdrop: String?) {
         self.id = id
         self.name = name.replacingOccurrences(of: " Collection", with: "")
         super.init(nibName: nil, bundle: nil)
-        hero.show(Title(id: id, mediaType: .collection, name: self.name, posterPath: nil, backdropPath: backdrop), meta: "Collection")
+        hero.show(Title(id: id, mediaType: .collection, name: self.name, posterPath: poster, backdropPath: backdrop), meta: "Collection")
     }
     required init?(coder: NSCoder) { fatalError() }
 

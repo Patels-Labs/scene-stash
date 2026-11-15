@@ -143,7 +143,7 @@ nonisolated struct TitleDetail: Decodable, Sendable {
     let midCredits: Bool
     let afterCredits: Bool
     /// The film series this belongs to, for planning a marathon of the lot.
-    let collection: (id: Int, name: String, backdrop: String?)?
+    let collection: (id: Int, name: String, poster: String?, backdrop: String?)?
 
     var year: String? { date.map { String($0.prefix(4)) } }
     /// Seasons that count toward progress (specials excluded).
@@ -158,7 +158,7 @@ nonisolated struct TitleDetail: Decodable, Sendable {
     }
     private struct Crew: Decodable { let name: String; let job: String? }
     private struct Credits: Decodable { let cast: [CastMember]; let crew: [Crew]? }
-    private struct Series: Decodable { let id: Int; let name: String; let backdropPath: String? }
+    private struct Series: Decodable { let id: Int; let name: String; let posterPath: String?; let backdropPath: String? }
     private struct Providers: Decodable { let results: [String: RegionProviders] }
     /// Films nest keywords under `keywords`, shows under `results`.
     private struct Keywords: Decodable {
@@ -207,7 +207,7 @@ nonisolated struct TitleDetail: Decodable, Sendable {
         providers = try c.decodeIfPresent(Providers.self, forKey: .watchProviders)?.results ?? [:]
         recommendations = (try? c.decodeIfPresent(Page<Title>.self, forKey: .recommendations)?.results) ?? []
         let tags = (try? c.decodeIfPresent(Keywords.self, forKey: .keywords)).flatMap { $0?.keywords ?? $0?.results } ?? []
-        collection = (try? c.decodeIfPresent(Series.self, forKey: .belongsToCollection)).flatMap { $0 }.map { ($0.id, $0.name, $0.backdropPath) }
+        collection = (try? c.decodeIfPresent(Series.self, forKey: .belongsToCollection)).flatMap { $0 }.map { ($0.id, $0.name, $0.posterPath, $0.backdropPath) }
         midCredits = tags.contains { $0.id == 179431 } // "duringcreditsstinger"
         afterCredits = tags.contains { $0.id == 179430 } // "aftercreditsstinger"
     }
@@ -351,11 +351,12 @@ final class TMDB {
         if let hit = artworks[key] { return hit }
         struct Images: Decodable {
             struct Image: Decodable { let filePath: String; let iso6391: String? }
-            let logos: [Image]; let posters: [Image]
+            // Collections have no logos, so the key is missing rather than empty.
+            let logos: [Image]?; let posters: [Image]?
         }
         let images: Images? = try? await get("\(key)/images", ["include_image_language": "en,null"])
-        let logo = images?.logos.first { $0.iso6391 == "en" }?.filePath ?? images?.logos.first?.filePath
-        let art = Artwork(logo: logo, poster: images?.posters.first { $0.iso6391 == nil }?.filePath)
+        let logo = images?.logos?.first { $0.iso6391 == "en" }?.filePath ?? images?.logos?.first?.filePath
+        let art = Artwork(logo: logo, poster: images?.posters?.first { $0.iso6391 == nil }?.filePath)
         artworks[key] = art
         return art
     }
