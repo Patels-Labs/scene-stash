@@ -18,6 +18,8 @@ nonisolated struct Title: Decodable, Hashable, Sendable {
     let voteAverage: Double?
 
     var year: String? { date.flatMap { $0.count >= 4 ? String($0.prefix(4)) : nil } }
+    /// Has a release date still to come. No date (many saved titles carry none) counts as out.
+    @MainActor var unreleased: Bool { date.map { !DateText.isPast($0) } ?? false }
 
     private enum CodingKeys: String, CodingKey {
         case id, mediaType, title, name, posterPath, backdropPath, overview, releaseDate, firstAirDate, voteAverage

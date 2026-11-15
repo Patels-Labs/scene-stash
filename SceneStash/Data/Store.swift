@@ -233,9 +233,18 @@ final class Store {
             item.watchedAt = .now
             item.position = 0
         }
+        // Back on the Watchlist means not started: no place in it to keep.
+        if status == .watchlist { item.position = 0 }
         item.status = status
         save()
+        endSession(title, status: status)
         return item
+    }
+
+    /// A film that's no longer Watching keeps no clock: its Live Activity ends, as finished if it was seen.
+    private func endSession(_ title: Title, status: TrackStatus?) {
+        guard status != .watching, let s = WatchSession.shared.state, s.id == title.id, s.key == nil, title.mediaType == .movie else { return }
+        Task { status == .seen ? await WatchSession.shared.finish() : await WatchSession.shared.stop(saving: false) }
     }
 
     func setRating(_ rating: Int, for title: Title) {
@@ -251,7 +260,10 @@ final class Store {
         let item = tracked(title.id, title.mediaType) ?? track(title, status: .watching, runtime: runtime)
         if let runtime, item.runtime == 0 { item.runtime = Int32(runtime) }
         item.position = Int32(max(seconds, 0))
-        if seconds > 0, item.status != .watching {
+        if seconds <= 0, item.status == .watching, title.mediaType == .movie {
+            // Dragged back to the start: it's not being watched any more.
+            item.status = item.watchedAt != nil ? .seen : .watchlist
+        } else if seconds > 0, item.status != .watching {
             // Starting it again: write down the times so far before Watching hides them.
             if item.status == .seen { item.viewings = item.viewings }
             item.status = .watching
@@ -322,6 +334,7 @@ final class Store {
         if let item = tracked(title.id, title.mediaType) { context.delete(item) }
         if title.mediaType == .tv { episodes(show: title.id).forEach(context.delete) }
         save()
+        endSession(title, status: nil)
     }
 
     /// Marks episodes watched (or unwatched); starts tracking the show as Watching if needed.
