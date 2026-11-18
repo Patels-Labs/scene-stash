@@ -61,7 +61,8 @@ final class OnboardingViewController: UIViewController {
     // Started here rather than in viewDidLoad so a replay from Settings doesn't spend it under the cross-dissolve.
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        guard opening == nil, coldOpen.superview != nil else { return }
+        // A tap during the replay's cross-dissolve may already have settled it.
+        guard opening == nil, coldOpen.superview != nil, coldOpen.isUserInteractionEnabled else { return }
         if UIAccessibility.isReduceMotionEnabled || UIAccessibility.isVoiceOverRunning { return settle() }
         opening = Task {
             await coldOpen.play()
@@ -119,12 +120,13 @@ final class OnboardingViewController: UIViewController {
         UIAccessibility.post(notification: .screenChanged, argument: next)
         guard let old else { return }
         // Each beat pushes the last one off to the left, like turning a page forward.
-        let shift = UIAccessibility.isReduceMotionEnabled ? 0 : stage.bounds.width * 0.3
+        let reduce = UIAccessibility.isReduceMotionEnabled
+        let shift = reduce ? 0 : stage.bounds.width * 0.3
         next.alpha = 0
         next.transform = CGAffineTransform(translationX: shift, y: 0)
         Spring.move(response: 0.55, {
             old.alpha = 0
-            old.transform = CGAffineTransform(translationX: -shift, y: 0).scaledBy(x: 0.94, y: 0.94)
+            if !reduce { old.transform = CGAffineTransform(translationX: -shift, y: 0).scaledBy(x: 0.94, y: 0.94) }
             next.alpha = 1
             next.transform = .identity
         }, completion: { _ in old.removeFromSuperview() })
@@ -158,9 +160,12 @@ final class OnboardingViewController: UIViewController {
             let rest = CGAffineTransform(translationX: 0, y: abs(tilt) * 10).rotated(by: tilt * 0.1)
             art.alpha = 0
             art.transform = reduce ? rest : CGAffineTransform(translationX: tilt * 30, y: 160).rotated(by: tilt * 0.4)
-            Spring.move(response: 0.7, bounce: 0.3, delay: 0.2 + Double(i) * 0.1) {
-                art.alpha = 1
-                art.transform = rest
+            // Next runloop, once show(_:) has put the beat in the window.
+            DispatchQueue.main.async {
+                Spring.move(response: 0.7, bounce: 0.3, delay: 0.2 + Double(i) * 0.1) {
+                    art.alpha = 1
+                    art.transform = rest
+                }
             }
         }
         let posters = UIStackView(arrangedSubviews: arts)
@@ -277,7 +282,7 @@ private final class ColdOpen: UIView {
         super.init(frame: .zero)
         backgroundColor = Theme.bg // matches the launch screen, so the cut from launch is invisible
         accessibilityElementsHidden = true
-        wordmark.attributedText = NSAttributedString(string: "SCENE STASH", attributes: [.kern: 2])
+        wordmark.attributedText = NSAttributedString(string: "SCENE STASH", attributes: [.kern: 2, .font: wordmark.font!, .foregroundColor: Theme.text])
         wordmark.textAlignment = .center
         [halo, ticket, wordmark].forEach { addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
         halo.pin(to: self)
