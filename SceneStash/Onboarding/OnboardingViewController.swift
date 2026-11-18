@@ -339,7 +339,7 @@ private final class Halo: UIView {
 }
 
 /// The ticket from the app icon, drawn on the same 100-unit grid as Design/build_icon.swift.
-private final class Ticket: UIView {
+final class Ticket: UIView {
     private let body = TicketPiece(CGRect(x: 12, y: 31, width: 52, height: 38))
     private let stub = TicketPiece(CGRect(x: 64, y: 31, width: 22, height: 38))
     private let perforation = CAShapeLayer()
@@ -357,6 +357,14 @@ private final class Ticket: UIView {
         stub.layer.anchorPoint = CGPoint(x: 0.75, y: 0.5) // tips about the tear line, as in the icon
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    /// A rect on the 100-unit grid as ticket stock: rounded, with the notches cut from the tear line.
+    static func shape(_ rect: CGRect, unit u: CGFloat) -> CGPath {
+        let scaled = CGRect(x: rect.minX * u, y: rect.minY * u, width: rect.width * u, height: rect.height * u)
+        let notches = CGMutablePath()
+        for y: CGFloat in [31, 69] { notches.addEllipse(in: CGRect(x: 59.5 * u, y: (y - 4.5) * u, width: 9 * u, height: 9 * u)) }
+        return CGPath(roundedRect: scaled, cornerWidth: 5 * u, cornerHeight: 5 * u, transform: nil).subtracting(notches)
+    }
 
     /// Snaps the stub away to where it sits in the icon: dropped and tipped.
     func tear() {
@@ -407,10 +415,7 @@ private final class TicketPiece: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         let u = bounds.width / 100
-        let scaled = CGRect(x: rect.minX * u, y: rect.minY * u, width: rect.width * u, height: rect.height * u)
-        let notches = CGMutablePath()
-        for y: CGFloat in [31, 69] { notches.addEllipse(in: CGRect(x: 59.5 * u, y: (y - 4.5) * u, width: 9 * u, height: 9 * u)) }
-        let path = CGPath(roundedRect: scaled, cornerWidth: 5 * u, cornerHeight: 5 * u, transform: nil).subtracting(notches)
+        let path = Ticket.shape(rect, unit: u)
         stock.place(bounds)
         shape.path = path
         layer.shadowPath = path
