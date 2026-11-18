@@ -1,12 +1,15 @@
 import UIKit
 
-/// First launch: a poster wall → "Watched it?" → streaming services → your library.
+/// First launch: the icon comes to life → a poster wall → "Watched it?" → streaming services → your library.
 final class OnboardingViewController: UIViewController {
     private let stage = UIView()
+    private let bar = UIStackView()
     private let button = CapsuleButton.primary("Get Started")
     private let skip = CapsuleButton.glass("Skip")
     private let intro = WallBeat(heading: "Every film.\nEvery episode.\nOne library.", body: "Track what you watch, find what's next, and plan movie nights with friends.")
     private let deck = DeckBeat()
+    private let coldOpen = ColdOpen()
+    private var opening: Task<Void, Never>?
     private var beat = 0
     private var current: UIView?
     private var titles: [Title] = []
@@ -24,10 +27,14 @@ final class OnboardingViewController: UIViewController {
         button.heightAnchor.constraint(greaterThanOrEqualToConstant: 50).isActive = true
         button.addAction(UIAction { [weak self] _ in self?.advance() }, for: .primaryActionTriggered)
         skip.addAction(UIAction { [weak self] _ in self?.finish() }, for: .primaryActionTriggered)
-        let bar = UIStackView(arrangedSubviews: [button, skip])
+        [button, skip].forEach { bar.addArrangedSubview($0) }
         bar.axis = .vertical
         bar.spacing = 10
+        bar.alpha = 0
         [stage, bar].forEach { view.addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        view.addSubview(coldOpen)
+        coldOpen.pin(to: view)
+        coldOpen.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(settle)))
         NSLayoutConstraint.activate([
             stage.topAnchor.constraint(equalTo: view.topAnchor),
             stage.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -49,6 +56,43 @@ final class OnboardingViewController: UIViewController {
             intro.show(titles)
             deck.load(titles)
         }
+    }
+
+    // Started here rather than in viewDidLoad so a replay from Settings doesn't spend it under the cross-dissolve.
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // A tap during the replay's cross-dissolve may already have settled it.
+        guard opening == nil, coldOpen.superview != nil, coldOpen.isUserInteractionEnabled else { return }
+        if UIAccessibility.isReduceMotionEnabled || UIAccessibility.isVoiceOverRunning { return settle() }
+        opening = Task {
+            await coldOpen.play()
+            // Give the posters a moment to arrive so the wall deals in full, but never wait on a dead network.
+            var waited = 0
+            while titles.isEmpty, waited < 12, !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(100))
+                waited += 1
+            }
+            settle()
+        }
+    }
+
+    /// Ends the cold open wherever it is (a tap skips straight here) and deals in the wall.
+    @objc private func settle() {
+        guard coldOpen.superview != nil, coldOpen.isUserInteractionEnabled else { return }
+        opening?.cancel()
+        coldOpen.isUserInteractionEnabled = false
+        intro.deal()
+        let reduce = UIAccessibility.isReduceMotionEnabled
+        Spring.move(response: 0.7, {
+            self.coldOpen.alpha = 0
+            if !reduce { self.coldOpen.ticket.transform = self.coldOpen.ticket.transform.scaledBy(x: 1.25, y: 1.25) }
+        }, completion: { _ in self.coldOpen.removeFromSuperview() })
+        if !reduce { bar.transform = CGAffineTransform(translationX: 0, y: 40) }
+        Spring.move(response: 0.6, bounce: 0.2, delay: 0.7) {
+            self.bar.alpha = 1
+            self.bar.transform = .identity
+        }
+        UIAccessibility.post(notification: .screenChanged, argument: intro)
     }
 
     private func advance() {
@@ -75,10 +119,16 @@ final class OnboardingViewController: UIViewController {
         current = next
         UIAccessibility.post(notification: .screenChanged, argument: next)
         guard let old else { return }
+        // Each beat pushes the last one off to the left, like turning a page forward.
+        let reduce = UIAccessibility.isReduceMotionEnabled
+        let shift = reduce ? 0 : stage.bounds.width * 0.3
         next.alpha = 0
-        Spring.move({
+        next.transform = CGAffineTransform(translationX: shift, y: 0)
+        Spring.move(response: 0.55, {
             old.alpha = 0
+            if !reduce { old.transform = CGAffineTransform(translationX: -shift, y: 0).scaledBy(x: 0.94, y: 0.94) }
             next.alpha = 1
+            next.transform = .identity
         }, completion: { _ in old.removeFromSuperview() })
     }
 
@@ -96,13 +146,29 @@ final class OnboardingViewController: UIViewController {
             wall.show(titles)
             return wall
         }
-        let posters = UIStackView(arrangedSubviews: added.prefix(3).map { title in
+        let arts = added.prefix(3).map { title in
             let art = ArtView(radius: 10)
             art.show(TMDB.imageURL(title.posterPath, .poster), name: title.name)
             art.widthAnchor.constraint(equalToConstant: Shelf.poster.width).isActive = true
             art.heightAnchor.constraint(equalToConstant: Shelf.poster.height).isActive = true
             return art
-        })
+        }
+        // Dealt up from below and fanned like a hand of cards.
+        let reduce = UIAccessibility.isReduceMotionEnabled
+        for (i, art) in arts.enumerated() {
+            let tilt = CGFloat(i) - CGFloat(arts.count - 1) / 2
+            let rest = CGAffineTransform(translationX: 0, y: abs(tilt) * 10).rotated(by: tilt * 0.1)
+            art.alpha = 0
+            art.transform = reduce ? rest : CGAffineTransform(translationX: tilt * 30, y: 160).rotated(by: tilt * 0.4)
+            // Next runloop, once show(_:) has put the beat in the window.
+            DispatchQueue.main.async {
+                Spring.move(response: 0.7, bounce: 0.3, delay: 0.2 + Double(i) * 0.1) {
+                    art.alpha = 1
+                    art.transform = rest
+                }
+            }
+        }
+        let posters = UIStackView(arrangedSubviews: arts)
         posters.spacing = Shelf.gap
         posters.accessibilityElementsHidden = true
         let words = beatHeader("\(added.count) \(added.count == 1 ? "title" : "titles") in your library", body: "All set. Tonight's picks are waiting.")
@@ -140,8 +206,10 @@ private func beatHeader(_ title: String, body: String) -> UIStackView {
 private final class WallBeat: UIView {
     private let tiles = (0..<16).map { _ in ArtView(radius: 10) }
     private let shade = CAGradientLayer()
+    private let words: UIStackView
 
     init(heading: String, body: String) {
+        words = beatHeader(heading, body: body)
         super.init(frame: .zero)
         clipsToBounds = true
         let rows = stride(from: 0, to: tiles.count, by: 4).map { i in
@@ -156,7 +224,6 @@ private final class WallBeat: UIView {
         wall.accessibilityElementsHidden = true
         shade.colors = [UIColor.clear.cgColor, Theme.bg.cgColor]
         shade.locations = [0.25, 0.68]
-        let words = beatHeader(heading, body: body)
         addSubview(wall)
         layer.addSublayer(shade)
         addSubview(words)
@@ -180,6 +247,175 @@ private final class WallBeat: UIView {
 
     func show(_ titles: [Title]) {
         for (tile, title) in zip(tiles, titles) { tile.show(TMDB.imageURL(title.posterPath, .poster), name: title.name) }
+    }
+
+    /// Posters rise in on a diagonal wave from the top-left, then the headline, then the line under it.
+    func deal() {
+        let lift = UIAccessibility.isReduceMotionEnabled ? .identity : CGAffineTransform(translationX: 0, y: 60).scaledBy(x: 0.88, y: 0.88)
+        for (i, tile) in tiles.enumerated() {
+            tile.alpha = 0
+            tile.transform = lift
+            Spring.move(response: 0.9, delay: Double(i % 4 + i / 4) * 0.06) {
+                tile.alpha = 1
+                tile.transform = .identity
+            }
+        }
+        for (i, line) in words.arrangedSubviews.enumerated() {
+            line.alpha = 0
+            line.transform = lift == .identity ? .identity : CGAffineTransform(translationX: 0, y: 24)
+            Spring.move(response: 0.7, delay: 0.35 + Double(i) * 0.15) {
+                line.alpha = 1
+                line.transform = .identity
+            }
+        }
+    }
+}
+
+/// The app icon coming to life: out of the dark, the ticket rises, its stub tears off, and the name lands under it.
+private final class ColdOpen: UIView {
+    let ticket = Ticket()
+    private let halo = Halo()
+    private let wordmark = UILabel.make(UIFontMetrics(forTextStyle: .largeTitle).scaledFont(for: .systemFont(ofSize: 40, weight: .black, width: .compressed)))
+    private let tilt = CGAffineTransform(rotationAngle: -14 * .pi / 180)
+
+    init() {
+        super.init(frame: .zero)
+        backgroundColor = Theme.bg // matches the launch screen, so the cut from launch is invisible
+        accessibilityElementsHidden = true
+        wordmark.attributedText = NSAttributedString(string: "SCENE STASH", attributes: [.kern: 2, .font: wordmark.font!, .foregroundColor: Theme.text])
+        wordmark.textAlignment = .center
+        [halo, ticket, wordmark].forEach { addSubview($0); $0.translatesAutoresizingMaskIntoConstraints = false }
+        halo.pin(to: self)
+        NSLayoutConstraint.activate([
+            ticket.centerXAnchor.constraint(equalTo: centerXAnchor),
+            ticket.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -40),
+            ticket.widthAnchor.constraint(equalToConstant: 260),
+            ticket.heightAnchor.constraint(equalTo: ticket.widthAnchor),
+            wordmark.topAnchor.constraint(equalTo: ticket.bottomAnchor, constant: -36),
+            wordmark.centerXAnchor.constraint(equalTo: centerXAnchor),
+        ])
+        halo.alpha = 0
+        ticket.alpha = 0
+        ticket.transform = CGAffineTransform(translationX: 0, y: 120).scaledBy(x: 0.8, y: 0.8)
+        wordmark.alpha = 0
+        wordmark.transform = CGAffineTransform(translationX: 0, y: 20)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// About two and a half seconds. Returns early if cancelled; whoever cancels sets the end state.
+    func play() async {
+        func wait(_ seconds: Double) async -> Bool { (try? await Task.sleep(for: .seconds(seconds))) != nil }
+        Spring.move(response: 1.6) { self.halo.alpha = 1 }
+        guard await wait(0.2) else { return }
+        Spring.move(response: 1.0, bounce: 0.12) {
+            self.ticket.alpha = 1
+            self.ticket.transform = self.tilt
+        }
+        guard await wait(1.0) else { return }
+        Haptics.thunk()
+        ticket.tear()
+        guard await wait(0.3) else { return }
+        Spring.move(response: 0.8) {
+            self.wordmark.alpha = 1
+            self.wordmark.transform = .identity
+        }
+        _ = await wait(1.1)
+    }
+}
+
+/// The icon's low amber light, so the ticket sits in a room rather than on a void.
+private final class Halo: UIView {
+    override class var layerClass: AnyClass { CAGradientLayer.self }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        let glow = layer as! CAGradientLayer
+        glow.type = .radial
+        glow.colors = [UIColor(red: 1, green: 0.6, blue: 0.2, alpha: 0.32).cgColor, UIColor(red: 1, green: 0.6, blue: 0.2, alpha: 0).cgColor]
+        glow.startPoint = CGPoint(x: 0.5, y: 0.45)
+        glow.endPoint = CGPoint(x: 1.25, y: 0.9)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+/// The ticket from the app icon, drawn on the same 100-unit grid as Design/build_icon.swift.
+private final class Ticket: UIView {
+    private let body = TicketPiece(CGRect(x: 12, y: 31, width: 52, height: 38))
+    private let stub = TicketPiece(CGRect(x: 64, y: 31, width: 22, height: 38))
+    private let perforation = CAShapeLayer()
+    private let letter = UILabel()
+
+    init() {
+        super.init(frame: .zero)
+        perforation.fillColor = UIColor(white: 0, alpha: 0.55).cgColor
+        letter.textColor = .black
+        letter.text = "S"
+        addSubview(body)
+        layer.addSublayer(perforation)
+        addSubview(letter)
+        addSubview(stub)
+        stub.layer.anchorPoint = CGPoint(x: 0.75, y: 0.5) // tips about the tear line, as in the icon
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Snaps the stub away to where it sits in the icon: dropped and tipped.
+    func tear() {
+        let u = bounds.width / 100
+        Spring.move(response: 0.5, bounce: 0.45) {
+            self.stub.transform = CGAffineTransform(rotationAngle: 11 * .pi / 180).concatenating(CGAffineTransform(translationX: 3.5 * u, y: 3.5 * u))
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let u = bounds.width / 100
+        body.bounds = bounds
+        body.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        stub.bounds = bounds
+        stub.center = CGPoint(x: 75 * u, y: 50 * u)
+        perforation.place(bounds)
+        let dots = CGMutablePath()
+        for i in 0..<6 { dots.addEllipse(in: CGRect(x: 62.2 * u, y: (39 + CGFloat(i) * 4.4) * u, width: 1.6 * u, height: 1.6 * u)) }
+        perforation.path = dots
+        // The icon's display face: SF Pro Compressed Black, its cap height centred on (38, 50).
+        let font = UIFont.systemFont(ofSize: 46 * u, weight: .black, width: .compressed)
+        letter.font = font
+        letter.sizeToFit()
+        letter.center = CGPoint(x: 38 * u, y: 50 * u - (font.ascender - font.capHeight / 2) + letter.bounds.midY)
+    }
+}
+
+/// One piece of the ticket: top-lit amber stock with the notches cut from the tear line, and its drop shadow.
+private final class TicketPiece: UIView {
+    private let rect: CGRect
+    private let stock = CAGradientLayer()
+    private let shape = CAShapeLayer()
+
+    init(_ rect: CGRect) {
+        self.rect = rect
+        super.init(frame: .zero)
+        stock.colors = [UIColor(red: 1, green: 0.8, blue: 0.45, alpha: 1).cgColor, Theme.accent.cgColor]
+        stock.startPoint = CGPoint(x: 0.5, y: rect.minY / 100)
+        stock.endPoint = CGPoint(x: 0.5, y: rect.maxY / 100)
+        stock.mask = shape
+        layer.addSublayer(stock)
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.7
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let u = bounds.width / 100
+        let scaled = CGRect(x: rect.minX * u, y: rect.minY * u, width: rect.width * u, height: rect.height * u)
+        let notches = CGMutablePath()
+        for y: CGFloat in [31, 69] { notches.addEllipse(in: CGRect(x: 59.5 * u, y: (y - 4.5) * u, width: 9 * u, height: 9 * u)) }
+        let path = CGPath(roundedRect: scaled, cornerWidth: 5 * u, cornerHeight: 5 * u, transform: nil).subtracting(notches)
+        stock.place(bounds)
+        shape.path = path
+        layer.shadowPath = path
+        layer.shadowOffset = CGSize(width: 0, height: 2.5 * u)
+        layer.shadowRadius = 3 * u
     }
 }
 
