@@ -144,6 +144,45 @@ final class FactCell: UICollectionViewCell {
     }
 }
 
+/// Label-and-value facts on a card, two to a row.
+final class InfoCell: UICollectionViewCell {
+    private let grid = UIStackView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        Card.style(contentView)
+        grid.axis = .vertical
+        grid.spacing = 14
+        contentView.addSubview(grid)
+        grid.pin(to: contentView, inset: 16)
+        isAccessibilityElement = true
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(_ rows: [(String, String)]) {
+        grid.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for start in stride(from: 0, to: rows.count, by: 2) {
+            var pairs = rows[start..<min(start + 2, rows.count)].map { label, value -> UIView in
+                let name = UILabel.make(Theme.text(.caption1, weight: .semibold), Theme.secondary)
+                let text = UILabel.make(Theme.text(.subheadline), Theme.text, lines: 0)
+                name.text = label
+                text.text = value
+                let stack = UIStackView(arrangedSubviews: [name, text])
+                stack.axis = .vertical
+                stack.spacing = 2
+                return stack
+            }
+            if pairs.count == 1 { pairs.append(UIView()) }
+            let line = UIStackView(arrangedSubviews: pairs)
+            line.distribution = .fillEqually
+            line.alignment = .top
+            line.spacing = 16
+            grid.addArrangedSubview(line)
+        }
+        accessibilityLabel = rows.map { "\($0.0): \($0.1)" }.joined(separator: ". ")
+    }
+}
+
 /// Your rating, 1 to 10, as a row of round buttons. Tapping the chosen one clears it.
 final class RatingRow: UIView {
     var onChange: ((Int) -> Void)?
@@ -279,7 +318,7 @@ final class EpisodeLockup: UICollectionViewCell {
 
     func configure(_ e: Episode, watched: Bool, aired: Bool, next: Bool, runtime: Int?) {
         art.show(TMDB.imageURL(e.stillPath, .backdrop), name: nil)
-        label.text = "Episode \(e.episodeNumber)"
+        label.text = ["Episode \(e.episodeNumber)", e.milestone].compactMap { $0 }.joined(separator: " · ")
         name.text = e.name
         blurb.text = e.overview
         let length = (e.runtime ?? runtime).map { "\($0)m" }
@@ -301,7 +340,7 @@ final class EpisodeLockup: UICollectionViewCell {
         tickBacking.isHidden = watched
         tickArea.isHidden = !aired
         contentView.alpha = aired ? 1 : 0.55
-        accessibilityLabel = "Episode \(e.episodeNumber), \(e.name)" + (watched ? ", watched" : "") + (aired ? "" : ", not out yet")
+        accessibilityLabel = "\(label.text ?? ""), \(e.name)" + (watched ? ", watched" : "") + (aired ? "" : ", not out yet")
         accessibilityHint = "Double tap for details"
         accessibilityCustomActions = aired ? [UIAccessibilityCustomAction(name: watched ? "Mark as Not Watched" : "Mark as Watched") { [weak self] _ in
             self?.onTick?()

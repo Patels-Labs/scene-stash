@@ -69,6 +69,52 @@ nonisolated struct Episode: Decodable, Hashable, Sendable {
     let airDate: String?
     let runtime: Int?
     var guestStars: [CastMember]? = nil
+    /// Only in a season's listing: who directed and wrote it, its score, and whether it ends a season.
+    var crew: [CrewMember]? = nil
+    var voteAverage: Double? = nil
+    var voteCount: Int? = nil
+    var episodeType: String? = nil
+
+    /// "Season Finale", "Mid-Season Finale", or nil for a regular episode.
+    var milestone: String? {
+        switch episodeType {
+        case "finale": "Season Finale"
+        case "mid_season": "Mid-Season Finale"
+        default: nil
+        }
+    }
+
+    /// Up to two names for any of `jobs`, e.g. "Vince Gilligan & Peter Gould".
+    func credit(_ jobs: Set<String>) -> String? {
+        var seen = Set<Int>()
+        let names = (crew ?? []).filter { jobs.contains($0.job ?? "") && seen.insert($0.id).inserted }.prefix(2).map(\.name)
+        return names.isEmpty ? nil : names.joined(separator: " & ")
+    }
+}
+
+nonisolated extension Episode {
+    private enum CodingKeys: String, CodingKey {
+        case id, seasonNumber, episodeNumber, name, overview, stillPath, airDate, runtime, guestStars, crew, voteAverage, voteCount, episodeType
+    }
+    /// In an extension so the memberwise init survives. The extras are `try?`: a bad one mustn't lose the whole season.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(Int.self, forKey: .id), seasonNumber: try c.decode(Int.self, forKey: .seasonNumber),
+                  episodeNumber: try c.decode(Int.self, forKey: .episodeNumber), name: try c.decode(String.self, forKey: .name),
+                  overview: try c.decodeIfPresent(String.self, forKey: .overview), stillPath: try c.decodeIfPresent(String.self, forKey: .stillPath),
+                  airDate: try c.decodeIfPresent(String.self, forKey: .airDate), runtime: try c.decodeIfPresent(Int.self, forKey: .runtime),
+                  guestStars: try c.decodeIfPresent([CastMember].self, forKey: .guestStars))
+        crew = (try? c.decodeIfPresent([CrewMember].self, forKey: .crew)) ?? nil
+        voteAverage = (try? c.decodeIfPresent(Double.self, forKey: .voteAverage)) ?? nil
+        voteCount = (try? c.decodeIfPresent(Int.self, forKey: .voteCount)) ?? nil
+        episodeType = (try? c.decodeIfPresent(String.self, forKey: .episodeType)) ?? nil
+    }
+}
+
+nonisolated struct CrewMember: Decodable, Hashable, Sendable {
+    let id: Int
+    let name: String
+    let job: String?
 }
 
 nonisolated struct Season: Decodable, Sendable { let episodes: [Episode] }
@@ -78,6 +124,68 @@ nonisolated struct CastMember: Decodable, Hashable, Sendable {
     let name: String
     let character: String?
     let profilePath: String?
+}
+
+/// Someone in the cast or crew, with everything they've been in.
+nonisolated struct Person: Decodable, Sendable {
+    let id: Int
+    let name: String
+    let biography: String?
+    let birthday: String?
+    let deathday: String?
+    let placeOfBirth: String?
+    let knownForDepartment: String?
+    let profilePath: String?
+    /// Acting roles first, then crew jobs; talk shows and appearances as themselves left out.
+    let credits: [Credit]
+
+    nonisolated struct Credit: Decodable, Hashable, Sendable {
+        let title: Title
+        /// The character played, or the job done.
+        let role: String?
+        let votes: Int
+        private let genreIds: [Int]?
+
+        private enum CodingKeys: String, CodingKey { case character, job, voteCount, genreIds }
+        init(from decoder: Decoder) throws {
+            title = try Title(from: decoder)
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            let character = try c.decodeIfPresent(String.self, forKey: .character).flatMap { $0.isEmpty ? nil : $0 }
+            role = try character ?? c.decodeIfPresent(String.self, forKey: .job)
+            votes = try c.decodeIfPresent(Int.self, forKey: .voteCount) ?? 0
+            genreIds = try c.decodeIfPresent([Int].self, forKey: .genreIds)
+        }
+
+        /// Talk and news shows (TMDB's TV genres 10767, 10763), and anything where they play themselves.
+        var isAppearance: Bool {
+            if title.mediaType == .tv, genreIds?.contains(where: { $0 == 10767 || $0 == 10763 }) == true { return true }
+            let r = role?.lowercased() ?? ""
+            return r.hasPrefix("self") || ["himself", "herself", "themselves", "themself"].contains { r.contains($0) }
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, biography, birthday, deathday, placeOfBirth, knownForDepartment, profilePath, combinedCredits
+    }
+    private struct Combined: Decodable { let cast: [Credit]?; let crew: [Credit]? }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func text(_ key: CodingKeys) -> String? { ((try? c.decodeIfPresent(String.self, forKey: key)) ?? nil).flatMap { $0.isEmpty ? nil : $0 } }
+        id = try c.decode(Int.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        biography = text(.biography)
+        birthday = text(.birthday)
+        deathday = text(.deathday)
+        placeOfBirth = text(.placeOfBirth)
+        knownForDepartment = text(.knownForDepartment)
+        profilePath = text(.profilePath)
+        let combined = (try? c.decodeIfPresent(Combined.self, forKey: .combinedCredits)) ?? nil
+        let all = ((combined?.cast ?? []) + (combined?.crew ?? [])).filter { $0.title.mediaType != .person }
+        let roles = all.filter { !$0.isAppearance }
+        // A presenter or host may have nothing but appearances; better those than an empty page.
+        credits = roles.isEmpty ? all : roles
+    }
 }
 
 nonisolated struct Video: Decodable, Sendable { let key: String; let site: String; let type: String }
@@ -146,8 +254,29 @@ nonisolated struct TitleDetail: Decodable, Sendable {
     let afterCredits: Bool
     /// The film series this belongs to, for planning a marathon of the lot.
     let collection: (id: Int, name: String, poster: String?, backdrop: String?)?
+    let voteCount: Int?
+    /// Age rating by country code ("US": "PG-13"), only where one is set.
+    let certifications: [String: String]
+    let networks: [String]
+    let numberOfEpisodes: Int?
+    let lastAirDate: String?
+    /// TMDB uses 0 for unknown money; those come through as nil.
+    let budget: Int?
+    let revenue: Int?
+    let originalTitle: String?
+    let originalLanguage: String?
+    let countries: [String]
+    let studios: [String]
 
     var year: String? { date.map { String($0.prefix(4)) } }
+    /// "2008–2013" for a show that's finished, "2019–" for one still going, the year for a film.
+    var years: String? {
+        guard let start = year else { return nil }
+        guard mediaType == .tv else { return start }
+        // A running show's last air date is just its latest episode, so the range stays open.
+        guard status == "Ended" || status == "Canceled", let end = lastAirDate.map({ String($0.prefix(4)) }) else { return "\(start)–" }
+        return end == start ? start : "\(start)–\(end)"
+    }
     /// Seasons that count toward progress (specials excluded).
     var mainSeasons: [SeasonSummary] { seasons.filter { $0.seasonNumber > 0 && $0.episodeCount > 0 } }
     var title: Title { Title(id: id, mediaType: mediaType, name: name, posterPath: posterPath, backdropPath: backdropPath, overview: overview, date: date, voteAverage: voteAverage) }
@@ -156,7 +285,16 @@ nonisolated struct TitleDetail: Decodable, Sendable {
         case id, title, name, tagline, overview, posterPath, backdropPath, releaseDate, firstAirDate
         case runtime, episodeRunTime, genres, voteAverage, status, seasons, lastEpisodeToAir, nextEpisodeToAir
         case credits, videos, recommendations, createdBy, keywords, belongsToCollection
+        case voteCount, releaseDates, contentRatings, networks, numberOfEpisodes, lastAirDate, budget, revenue
+        case originalTitle, originalName, originalLanguage, productionCountries, productionCompanies
         case watchProviders = "watch/providers"
+    }
+    private struct Named: Decodable { let name: String }
+    /// Films carry certifications per release (`release_dates`), shows one rating per country (`content_ratings`).
+    private struct Ratings: Decodable {
+        struct Release: Decodable { let certification: String?; let type: Int? }
+        struct Country: Decodable { let iso31661: String; let rating: String?; let releaseDates: [Release]? }
+        let results: [Country]
     }
     private struct Crew: Decodable { let name: String; let job: String? }
     private struct Credits: Decodable { let cast: [CastMember]; let crew: [Crew]? }
@@ -212,6 +350,28 @@ nonisolated struct TitleDetail: Decodable, Sendable {
         collection = (try? c.decodeIfPresent(Series.self, forKey: .belongsToCollection)).flatMap { $0 }.map { ($0.id, $0.name, $0.posterPath, $0.backdropPath) }
         midCredits = tags.contains { $0.id == 179431 } // "duringcreditsstinger"
         afterCredits = tags.contains { $0.id == 179430 } // "aftercreditsstinger"
+
+        // Extras: none of these is worth failing the page over.
+        func optional<T: Decodable>(_ type: T.Type, _ key: CodingKeys) -> T? { (try? c.decodeIfPresent(type, forKey: key)) ?? nil }
+        func names(_ key: CodingKeys) -> [String] { optional([Named].self, key)?.map(\.name) ?? [] }
+        func known(_ key: CodingKeys) -> Int? { optional(Int.self, key).flatMap { $0 > 0 ? $0 : nil } }
+        voteCount = known(.voteCount)
+        var certs: [String: String] = [:]
+        for country in (optional(Ratings.self, .releaseDates) ?? optional(Ratings.self, .contentRatings))?.results ?? [] {
+            // A film's theatrical rating first; other releases only if that's blank.
+            let releases = (country.releaseDates ?? []).sorted { ($0.type == 3 ? 0 : 1) < ($1.type == 3 ? 0 : 1) }.compactMap(\.certification)
+            if let rating = ([country.rating].compactMap { $0 } + releases).first(where: { !$0.isEmpty }) { certs[country.iso31661] = rating }
+        }
+        certifications = certs
+        networks = names(.networks)
+        numberOfEpisodes = known(.numberOfEpisodes)
+        lastAirDate = optional(String.self, .lastAirDate).flatMap { $0.isEmpty ? nil : $0 }
+        budget = known(.budget)
+        revenue = known(.revenue)
+        originalTitle = optional(String.self, .originalTitle) ?? optional(String.self, .originalName)
+        originalLanguage = optional(String.self, .originalLanguage)
+        countries = names(.productionCountries)
+        studios = names(.productionCompanies)
     }
 }
 
@@ -242,6 +402,8 @@ extension Reel {
 
 enum ImageSize: String {
     case poster = "w342", posterLarge = "w500", hero = "w780", backdrop = "w1280", original = "original", still = "w300", profile = "w185", logo = "w92"
+    /// The largest profile size TMDB lists short of the original, for a person's page.
+    case portrait = "h632"
 }
 
 enum TMDBError: LocalizedError {
@@ -297,7 +459,12 @@ final class TMDB {
     }
 
     func detail(_ id: Int, _ type: MediaType) async throws -> TitleDetail {
-        try await get("\(type.rawValue)/\(id)", ["append_to_response": "credits,videos,watch/providers,recommendations,keywords"])
+        let ratings = type == .movie ? "release_dates" : "content_ratings"
+        return try await get("\(type.rawValue)/\(id)", ["append_to_response": "credits,videos,watch/providers,recommendations,keywords,\(ratings)"])
+    }
+
+    func person(_ id: Int) async throws -> Person {
+        try await get("person/\(id)", ["append_to_response": "combined_credits"])
     }
 
     func season(show: Int, number: Int) async throws -> Season {

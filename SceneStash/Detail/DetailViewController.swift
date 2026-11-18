@@ -3,9 +3,9 @@ import UIKit
 /// A title's page, Apple TV-style: tall art with its logo and the main buttons, then what you need to know,
 /// and shelves of episodes, cast and more.
 final class DetailViewController: UIViewController, UICollectionViewDelegate {
-    nonisolated private enum Section: Hashable { case hero, progress, credits, rating, viewings, episodes, series, providers, cast, more }
+    nonisolated private enum Section: Hashable { case hero, progress, credits, rating, viewings, episodes, series, providers, cast, more, info }
     nonisolated private enum Item: Hashable {
-        case hero, progress, credits, rating, viewings, series
+        case hero, progress, credits, rating, viewings, series, info
         case episode(Episode), provider(Provider), cast(CastMember), title(Title)
     }
 
@@ -24,7 +24,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
     private let trailer = CapsuleButton.circle("play.rectangle", label: "Watch trailer")
     private let status = CapsuleButton.circle("plus", label: "Add to Watchlist")
     private let overview = UILabel.make(Theme.text(.subheadline), UIColor(white: 1, alpha: 0.72), lines: 3)
-    private let info = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 2)
+    private let info = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 3)
 
     init(title: Title) {
         item = title
@@ -98,6 +98,27 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
     }
     private var nextEpisode: EpisodeKey? { detail?.nextUp(watched: watched) }
     private var tracked: Tracked? { Store.shared.tracked(item.id, item.mediaType) }
+
+    /// The reference facts at the foot of the page, Apple TV's "Information".
+    private var infoRows: [(String, String)] {
+        guard let d = detail else { return [] }
+        func money(_ n: Int?) -> String? { n.map { "$" + Double($0).formatted(.number.notation(.compactName).precision(.fractionLength(0...1))) } }
+        func list(_ names: [String]) -> String? { names.isEmpty ? nil : names.prefix(2).joined(separator: ", ") }
+        let rows: [(String, String?)]
+        if d.mediaType == .movie {
+            rows = [("Released", d.date.flatMap(DateText.pretty)), ("Budget", money(d.budget)), ("Box Office", money(d.revenue))]
+        } else {
+            rows = [("Network", list(d.networks)), ("First Aired", d.date.flatMap(DateText.pretty)), ("Status", d.status),
+                    ("Episodes", d.numberOfEpisodes.map(String.init))]
+        }
+        let shared: [(String, String?)] = [
+            ("Original Title", d.originalTitle == d.name ? nil : d.originalTitle),
+            ("Original Language", d.originalLanguage.flatMap { Locale.current.localizedString(forLanguageCode: $0) }),
+            ("Country", list(d.countries)),
+            ("Studio", list(d.studios)),
+        ]
+        return (rows + shared).compactMap { row in row.1.map { (row.0, $0) } }
+    }
     private var live: WatchSession.State? { WatchSession.shared.state.flatMap { $0.id == item.id ? $0 : nil } }
 
     // MARK: Hero
@@ -138,7 +159,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
 
     private func refreshHero() {
         let d = detail
-        var kind = [item.mediaType == .movie ? "Film" : "TV Show"]
+        var kind = [item.mediaType == .movie ? "Film" : d?.networks.first ?? "TV Show"]
         kind += (d?.genres.prefix(2).map(\.name) ?? [])
         hero.meta.text = kind.joined(separator: " · ")
         hero.meta.isHidden = false
@@ -194,7 +215,9 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         overview.isHidden = overview.text?.isEmpty ?? true
 
         var bits: [String] = []
-        if let year = d?.year ?? item.year { bits.append(year) }
+        if let year = d?.years ?? item.year { bits.append(year) }
+        // No fallback to another country's rating: it could mislead (a UK 15 isn't a US R).
+        if let rating = d?.certifications[Prefs.region] { bits.append(rating) }
         if item.mediaType == .movie {
             if let runtime = d?.runtime, runtime > 0 { bits.append(DateText.runtime(runtime)) }
         } else if let d {
@@ -207,7 +230,10 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
                 bits.append("Next episode \(upcoming)")
             }
         }
-        if let vote = d?.voteAverage ?? item.voteAverage, vote > 0 { bits.append("TMDB " + vote.formatted(.number.precision(.fractionLength(1)))) }
+        if let vote = d?.voteAverage ?? item.voteAverage, vote > 0 {
+            let votes = d?.voteCount.map { " (\($0.formatted(.number.notation(.compactName))))" } ?? ""
+            bits.append("TMDB " + vote.formatted(.number.precision(.fractionLength(1))) + votes)
+        }
         let text = NSMutableAttributedString(string: bits.joined(separator: " · "), attributes: [.foregroundColor: Theme.secondary])
         if let d, d.midCredits || d.afterCredits {
             text.append(NSAttributedString(string: "  ● After-credits scene", attributes: [.foregroundColor: Theme.accent]))
@@ -377,6 +403,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
                 return s
             case .cast: return Shelf.circles()
             case .more: return Shelf.posters()
+            case .info: return single(estimated: 200, insets: Shelf.margin, header: true)
             }
         }
     }
@@ -436,9 +463,13 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         let castReg = UICollectionView.CellRegistration<CircleLockup, Item> { cell, _, item in
             guard case .cast(let c) = item else { return }
             cell.configure(photo: TMDB.imageURL(c.profilePath, .profile), initial: String(c.name.prefix(1)), name: c.name, detail: c.character)
+            cell.accessibilityTraits = .button
         }
         let posterReg = UICollectionView.CellRegistration<PosterLockup, Item> { cell, _, item in
             if case .title(let t) = item { cell.configure(t) }
+        }
+        let infoReg = UICollectionView.CellRegistration<InfoCell, Item> { [unowned self] cell, _, _ in
+            cell.configure(infoRows)
         }
         let headerReg = UICollectionView.SupplementaryRegistration<ShelfHeader>(elementKind: ShelfHeader.kind) { [unowned self] header, _, indexPath in
             switch dataSource.sectionIdentifier(for: indexPath.section) {
@@ -449,6 +480,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             case .providers: header.configure("How to Watch")
             case .cast: header.configure("Cast & Crew")
             case .more: header.configure("More Like This")
+            case .info: header.configure("Information")
             default: header.configure("")
             }
         }
@@ -468,6 +500,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             case .provider: cv.dequeueConfiguredReusableCell(using: providerReg, for: indexPath, item: item)
             case .cast: cv.dequeueConfiguredReusableCell(using: castReg, for: indexPath, item: item)
             case .title: cv.dequeueConfiguredReusableCell(using: posterReg, for: indexPath, item: item)
+            case .info: cv.dequeueConfiguredReusableCell(using: infoReg, for: indexPath, item: item)
             }
         }
         dataSource.supplementaryViewProvider = { cv, kind, indexPath in
@@ -521,6 +554,9 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         if let more = detail?.recommendations.filter({ $0.posterPath != nil }).prefix(12), !more.isEmpty {
             snap.appendSections([.more]); snap.appendItems(more.map(Item.title))
         }
+        if !infoRows.isEmpty {
+            snap.appendSections([.info]); snap.appendItems([.info])
+        }
         dataSource.apply(snap, animatingDifferences: detail != nil && !UIAccessibility.isReduceMotionEnabled)
     }
 
@@ -542,6 +578,9 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
                 self?.dataSource.indexPath(for: selected).flatMap { collectionView.cellForItem(at: $0) }
             }
             navigationController?.pushViewController(page, animated: true)
+        case .cast(let c):
+            Haptics.tap()
+            navigationController?.pushViewController(PersonViewController(id: c.id, name: c.name, photo: c.profilePath), animated: true)
         case .provider(let p):
             if let url = p.searchURL(for: item.name) ?? detail?.providers[Prefs.region]?.link.flatMap(URL.init(string:)) { UIApplication.shared.open(url) }
         case .title(let t):
@@ -554,7 +593,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
 
     func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
         switch dataSource.itemIdentifier(for: indexPath) {
-        case .episode, .provider, .title, .series: true
+        case .episode, .provider, .title, .series, .cast: true
         default: false
         }
     }

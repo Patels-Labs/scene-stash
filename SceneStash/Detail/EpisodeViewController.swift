@@ -17,6 +17,7 @@ final class EpisodeViewController: UIViewController, UICollectionViewDelegate {
     private let hero = HeroView()
     private let episodeName = UILabel.make(Theme.text(.title3, weight: .semibold), Theme.text, lines: 2)
     private let overview = UILabel.make(Theme.text(.subheadline), UIColor(white: 1, alpha: 0.72), lines: 3)
+    private let credits = UILabel.make(Theme.text(.footnote), Theme.secondary, lines: 0)
     private let primary = CapsuleButton.primary("Start Watching", image: "play.fill")
     private let mark = CapsuleButton.glass("Mark as Watched", image: "checkmark")
 
@@ -82,12 +83,13 @@ final class EpisodeViewController: UIViewController, UICollectionViewDelegate {
         overview.accessibilityHint = "Double tap to read more"
         primary.addAction(UIAction { [weak self] _ in self?.primaryTapped() }, for: .primaryActionTriggered)
         mark.addAction(UIAction { [weak self] _ in self?.markTapped() }, for: .primaryActionTriggered)
-        [primary, mark, overview].forEach {
+        [primary, mark, overview, credits].forEach {
             hero.content.addArrangedSubview($0)
             $0.widthAnchor.constraint(equalTo: hero.content.widthAnchor).isActive = true
         }
         hero.content.setCustomSpacing(10, after: primary)
         hero.content.setCustomSpacing(18, after: mark)
+        hero.content.setCustomSpacing(8, after: overview)
     }
 
     @objc private func toggleOverview() {
@@ -103,11 +105,24 @@ final class EpisodeViewController: UIViewController, UICollectionViewDelegate {
         episodeName.text = episode.name
         overview.text = episode.overview
         overview.isHidden = episode.overview?.isEmpty ?? true
+        let people = [episode.credit(["Director"]).map { "Directed by \($0)" },
+                      episode.credit(["Writer", "Screenplay", "Teleplay"]).map { "Written by \($0)" }].compactMap { $0 }
+        credits.text = people.joined(separator: " · ")
+        credits.isHidden = people.isEmpty
         let date = episode.airDate.flatMap(DateText.pretty).map { aired ? $0 : "Airs \($0)" }
-        let line = ["S\(episode.seasonNumber), E\(episode.episodeNumber)", date, runtime > 0 ? DateText.runtime(runtime) : nil]
+        let score = (episode.voteCount ?? 0) > 0 ? episode.voteAverage.flatMap { $0 > 0 ? "TMDB " + $0.formatted(.number.precision(.fractionLength(1))) : nil } : nil
+        let line = [milestone, "S\(episode.seasonNumber), E\(episode.episodeNumber)", date, runtime > 0 ? DateText.runtime(runtime) : nil, score]
         // Stills are small next to posters, so this asks for the full-size image to stay sharp at this crop.
         hero.show(detail?.title ?? show, poster: episode.stillPath, meta: line.compactMap { $0 }.joined(separator: " · "), size: episode.stillPath == nil ? .hero : .original)
         refreshButtons()
+    }
+
+    /// A season finale that closes the last season of a finished show is the series finale.
+    private var milestone: String? {
+        guard let m = episode.milestone else { return nil }
+        guard episode.episodeType == "finale", let d = detail, d.status == "Ended" || d.status == "Canceled",
+              episode.seasonNumber == d.mainSeasons.last?.seasonNumber else { return m }
+        return "Series Finale"
     }
 
     private func refreshButtons() {
@@ -188,6 +203,7 @@ final class EpisodeViewController: UIViewController, UICollectionViewDelegate {
         let guestReg = UICollectionView.CellRegistration<CircleLockup, Item> { cell, _, item in
             guard case .guest(let c) = item else { return }
             cell.configure(photo: TMDB.imageURL(c.profilePath, .profile), initial: String(c.name.prefix(1)), name: c.name, detail: c.character)
+            cell.accessibilityTraits = .button
         }
         let episodeReg = UICollectionView.CellRegistration<EpisodeLockup, Item> { [unowned self] cell, _, item in
             guard case .episode(let e) = item else { return }
@@ -247,10 +263,18 @@ final class EpisodeViewController: UIViewController, UICollectionViewDelegate {
     }
 
     func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
-        if case .episode = dataSource.itemIdentifier(for: indexPath) { true } else { false }
+        switch dataSource.itemIdentifier(for: indexPath) {
+        case .episode, .guest: true
+        default: false
+        }
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        if case .guest(let c) = dataSource.itemIdentifier(for: indexPath) {
+            Haptics.tap()
+            navigationController?.pushViewController(PersonViewController(id: c.id, name: c.name, photo: c.profilePath), animated: true)
+            return
+        }
         guard case .episode(let e) = dataSource.itemIdentifier(for: indexPath), let navigationController else { return }
         Haptics.tap()
         // Swaps this page rather than stacking on it, so Back always goes to the show.
