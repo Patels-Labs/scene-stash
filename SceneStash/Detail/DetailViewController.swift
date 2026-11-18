@@ -363,7 +363,12 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
         var snap = dataSource.snapshot()
         snap.reconfigureItems(snap.itemIdentifiers)
         dataSource.apply(snap, animatingDifferences: false)
-        // Reloading the section would redraw this header too, but sends the shelf back to its first episode.
+        refreshSeasonHeader()
+    }
+
+    /// The episodes section keeps its identity across seasons, so its header is never re-dequeued: redraw it by hand.
+    /// Reloading the section would redraw this header too, but sends the shelf back to its first episode.
+    private func refreshSeasonHeader() {
         collectionView.visibleSupplementaryViews(ofKind: SeasonHeader.kind).compactMap { $0 as? SeasonHeader }.forEach(configureSeasonHeader)
     }
 
@@ -558,6 +563,7 @@ final class DetailViewController: UIViewController, UICollectionViewDelegate {
             snap.appendSections([.info]); snap.appendItems([.info])
         }
         dataSource.apply(snap, animatingDifferences: detail != nil && !UIAccessibility.isReduceMotionEnabled)
+        refreshSeasonHeader()
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
