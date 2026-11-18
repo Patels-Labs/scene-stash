@@ -3,6 +3,8 @@ import UIKit
 
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
+    /// Held until the scene first becomes active, so a background launch doesn't spend it unseen.
+    private var curtain: LaunchCurtain?
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
@@ -21,6 +23,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         if let start = UserDefaults.standard.string(forKey: "StartTab") { tabs.selectedTab = tabs.tabs.first { $0.identifier == start } }
         #endif
         window.makeKeyAndVisible()
+        // Onboarding opens with its own longer version of this.
+        if Prefs.onboarded { curtain = LaunchCurtain.install(in: window) }
         Task { await Store.shared.backfillRuntimes() }
         self.window = window
         Task { await Store.shared.loadIdentity() }
@@ -59,6 +63,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     // Keep the film's saved place current with any Start now session.
     func sceneWillResignActive(_ scene: UIScene) { WatchSession.shared.savePosition() }
     func sceneDidBecomeActive(_ scene: UIScene) {
+        curtain?.play()
+        curtain = nil
         WatchSession.shared.savePosition()
         Store.shared.updateFromNights()
     }
