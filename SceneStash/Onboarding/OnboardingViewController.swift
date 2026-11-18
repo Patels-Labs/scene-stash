@@ -597,13 +597,11 @@ private final class ServicesBeat: UIView {
             var background = cell.defaultBackgroundConfiguration()
             background.backgroundColor = Card.fill
             cell.backgroundConfiguration = background
-            let logo = UIImageView()
+            // Sized by frame: UIKit throws if a custom accessory turns off translatesAutoresizingMaskIntoConstraints.
+            let logo = UIImageView(frame: CGRect(x: 0, y: 0, width: 30, height: 30))
             logo.layer.cornerRadius = 6
             logo.layer.cornerCurve = .continuous
             logo.clipsToBounds = true
-            logo.translatesAutoresizingMaskIntoConstraints = false
-            logo.widthAnchor.constraint(equalToConstant: 30).isActive = true
-            logo.heightAnchor.constraint(equalToConstant: 30).isActive = true
             logo.setImage(TMDB.imageURL(provider.logoPath, .logo))
             let toggle = UISwitch()
             toggle.onTintColor = Theme.accent
@@ -614,8 +612,8 @@ private final class ServicesBeat: UIView {
                 if toggle.isOn { Prefs.services.insert(provider.providerId) } else { Prefs.services.remove(provider.providerId) }
             }, for: .valueChanged)
             cell.accessories = [
-                .customView(configuration: .init(customView: logo, placement: .leading(displayed: .always))),
-                .customView(configuration: .init(customView: toggle, placement: .trailing(displayed: .always))),
+                .customView(configuration: .init(customView: logo, placement: .leading(displayed: .always), maintainsFixedSize: true)),
+                .customView(configuration: .init(customView: toggle, placement: .trailing(displayed: .always), maintainsFixedSize: true)),
             ]
         }
         dataSource = UICollectionViewDiffableDataSource(collectionView: list) { collectionView, indexPath, provider in
