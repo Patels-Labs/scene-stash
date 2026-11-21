@@ -23,7 +23,7 @@ enum Card {
 }
 
 /// "Where You Are" in a film: the time, a slider to drag to where you stopped, and when you'll be done.
-/// While Start Watching is running it follows the clock instead.
+/// While Start Watching is running it follows the clock instead; dragging it moves the clock.
 final class WhereYouAreCell: UICollectionViewCell {
     var onCommit: ((Int) -> Void)?
     private let time = UILabel.make(Theme.text(.title1, weight: .bold).monospacedDigits)
@@ -61,7 +61,6 @@ final class WhereYouAreCell: UICollectionViewCell {
         self.runtime = runtime
         live = session
         ticker?.invalidate()
-        slider.isEnabled = session == nil
         if let session {
             if session.pausedAt == nil {
                 ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.tick() } }
@@ -73,10 +72,12 @@ final class WhereYouAreCell: UICollectionViewCell {
         }
     }
 
+    /// To the second while live, so skipping an intro lands where you meant.
+    private var liveSeconds: Int { Int(slider.value * Float(runtime * 60)) }
     private var seconds: Int { Int((slider.value * Float(runtime)).rounded()) * 60 }
 
     private func tick() {
-        guard let live else { return }
+        guard let live, !slider.isTracking else { return }
         let elapsed = Int(live.elapsed)
         slider.value = Float(live.elapsed) / Float(max(runtime * 60, 1))
         time.text = String(format: "%d:%02d:%02d", elapsed / 3600, elapsed % 3600 / 60, elapsed % 60)
@@ -88,7 +89,11 @@ final class WhereYouAreCell: UICollectionViewCell {
     }
 
     private func scrubbed() {
-        guard live == nil else { return }
+        if live != nil {
+            // Live: show where you'll land; the clock picks up from there on release.
+            time.text = DateText.clock(liveSeconds)
+            return
+        }
         time.text = DateText.clock(seconds)
         let remaining = max(runtime - seconds / 60, 0)
         left.text = seconds == 0 ? DateText.runtime(runtime) : "\(DateText.runtime(remaining)) left"
@@ -99,7 +104,12 @@ final class WhereYouAreCell: UICollectionViewCell {
     }
 
     private func commit() {
-        guard live == nil else { return }
+        if live != nil {
+            let target = liveSeconds
+            Task { await WatchSession.shared.seek(to: target) }
+            Haptics.tap()
+            return
+        }
         onCommit?(seconds)
         Haptics.tap()
     }
