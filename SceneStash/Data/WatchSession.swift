@@ -92,6 +92,15 @@ final class WatchSession {
         await update()
     }
 
+    /// Jumps the clock to `seconds` in, playing or paused: skipping a recap, or catching up after one.
+    func seek(to seconds: Int) async {
+        guard var s = state else { return }
+        s.startedAt = (s.pausedAt ?? .now).addingTimeInterval(-TimeInterval(seconds))
+        state = s
+        savePosition()
+        await update()
+    }
+
     /// Marks the film or episode seen and lets the activity show a last "finished" frame before it goes.
     func finish() async {
         guard let s = state else { return }
