@@ -69,9 +69,16 @@ final class WatchSession {
                       season: episode?.season, episode: episode?.episode)
         Store.shared.setPosition(max(seconds, 1), for: title, runtime: runtime)
         Haptics.thunk()
+        restoreActivity()
+    }
+
+    /// Puts the Live Activity up for the running session if there isn't one. iOS ends them when the app is
+    /// updated, after hours on screen, or when swiped away, while the session itself carries on.
+    func restoreActivity() {
         #if !targetEnvironment(macCatalyst) // Live Activities are iPhone-only; the Mac preview just keeps time.
-        guard let state, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        let attributes = NowShowingAttributes(id: state.id, name: episode.map { "\(state.name) · S\($0.season), E\($0.episode)" } ?? state.name, runtimeMinutes: runtime, tint: tint, stinger: stinger)
+        guard let state, Activity<NowShowingAttributes>.activities.isEmpty, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        let attributes = NowShowingAttributes(id: state.id, name: state.key.map { "\(state.name) · S\($0.season), E\($0.episode)" } ?? state.name,
+                                              runtimeMinutes: state.runtime, tint: state.tint, stinger: state.stinger)
         _ = try? Activity.request(attributes: attributes, content: .init(state: state.content, staleDate: attributes.end(state.content).addingTimeInterval(3600)))
         #endif
     }
