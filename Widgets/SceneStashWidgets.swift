@@ -357,7 +357,7 @@ private struct Poster: View {
     let tint: Color
 
     var body: some View {
-        if let url = SharedBox.posterURL(id), let image = UIImage(contentsOfFile: url.path) {
+        if let url = SharedBox.livePosterURL(id), let image = UIImage(contentsOfFile: url.path) {
             Image(uiImage: image).resizable().aspectRatio(contentMode: .fill).clipShape(RoundedRectangle(cornerRadius: 7))
         } else {
             RoundedRectangle(cornerRadius: 7).fill(LinearGradient(colors: [tint, tint.opacity(0.3)], startPoint: .top, endPoint: .bottom))

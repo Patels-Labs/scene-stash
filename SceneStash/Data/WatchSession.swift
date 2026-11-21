@@ -62,21 +62,24 @@ final class WatchSession {
         var tint = "F5B544"
         if let url = TMDB.imageURL(title.posterPath, .poster) {
             if let color = await ImageLoader.shared.tint(for: url) { tint = color.hex }
-            await savePoster(url, id: title.id)
+            await savePoster(url, to: SharedBox.posterURL(title.id))
         }
         state = State(id: title.id, name: title.name, poster: title.posterPath, backdrop: title.backdropPath, runtime: runtime,
                       stinger: stinger, tint: tint, startedAt: Date.now.addingTimeInterval(-TimeInterval(seconds)), pausedAt: nil,
                       season: episode?.season, episode: episode?.episode)
         Store.shared.setPosition(max(seconds, 1), for: title, runtime: runtime)
         Haptics.thunk()
-        restoreActivity()
+        await restoreActivity()
     }
 
     /// Puts the Live Activity up for the running session if there isn't one. iOS ends them when the app is
     /// updated, after hours on screen, or when swiped away, while the session itself carries on.
-    func restoreActivity() {
+    func restoreActivity() async {
         #if !targetEnvironment(macCatalyst) // Live Activities are iPhone-only; the Mac preview just keeps time.
         guard let state, Activity<NowShowingAttributes>.activities.isEmpty, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        // 132 px covers the Lock Screen's 44 pt poster at 3x.
+        if let url = TMDB.imageURL(state.poster, .poster) { await savePoster(url, to: SharedBox.livePosterURL(state.id), width: 132) }
+        guard self.state?.id == state.id, Activity<NowShowingAttributes>.activities.isEmpty else { return }
         let attributes = NowShowingAttributes(id: state.id, name: state.key.map { "\(state.name) · S\($0.season), E\($0.episode)" } ?? state.name,
                                               runtimeMinutes: state.runtime, tint: state.tint, stinger: state.stinger)
         _ = try? Activity.request(attributes: attributes, content: .init(state: state.content, staleDate: attributes.end(state.content).addingTimeInterval(3600)))
@@ -155,8 +158,8 @@ final class WatchSession {
 
     /// Saves a poster where the Live Activity and widgets can read it, `width` pixels across. WidgetKit won't
     /// draw a widget holding too large an image: it leaves the grey placeholder up instead.
-    func savePoster(_ url: URL, id: Int, width: CGFloat = 360) async {
-        guard let image = await ImageLoader.shared.image(url), let file = SharedBox.posterURL(id) else { return }
+    func savePoster(_ url: URL, to file: URL?, width: CGFloat = 360) async {
+        guard let file, let image = await ImageLoader.shared.image(url) else { return }
         let size = CGSize(width: width, height: width * 1.5)
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1

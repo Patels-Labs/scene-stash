@@ -11,6 +11,9 @@ nonisolated enum SharedBox {
 
     /// Small poster thumbnails the app saves for the Live Activity and widgets, which can't fetch images themselves.
     static func posterURL(_ id: Int) -> URL? { container?.appendingPathComponent("poster-\(id).jpg") }
+    /// The Live Activity's own, smaller copy: it draws a grey box for an image much bigger than it shows, and
+    /// Tonight rewrites `posterURL` at hero size.
+    static func livePosterURL(_ id: Int) -> URL? { container?.appendingPathComponent("live-poster-\(id).jpg") }
 }
 
 // MARK: - Widgets
