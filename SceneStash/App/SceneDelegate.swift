@@ -66,7 +66,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         curtain?.play()
         curtain = nil
         WatchSession.shared.savePosition()
-        WatchSession.shared.restoreActivity()
+        Task { await WatchSession.shared.restoreActivity() }
         Store.shared.updateFromNights()
     }
 

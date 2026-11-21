@@ -279,7 +279,7 @@ final class TonightViewController: UIViewController, UICollectionViewDelegate {
     /// Widgets fill with the poster, and can't download one themselves. A running title's copy stays as its Live Activity needs it.
     private func saveWidgetArt(_ title: Title) async {
         guard WatchSession.shared.state?.id != title.id, let url = TMDB.imageURL(title.posterPath, .hero) else { return }
-        await WatchSession.shared.savePoster(url, id: title.id, width: 600)
+        await WatchSession.shared.savePoster(url, to: SharedBox.posterURL(title.id), width: 600)
     }
 
     /// The programme starts now in the evening; earlier in the day it waits for doors at eight.
