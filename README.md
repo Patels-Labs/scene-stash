@@ -4,12 +4,8 @@
 
 <p align="center">A film and TV tracker for iOS that treats every night in like a night at the pictures.</p>
 
+<p align="center"><a href="https://github.com/Patels-Labs"><img src="https://raw.githubusercontent.com/Patels-Labs/.github/main/brand/readme-mark.png" alt="" height="22" align="absmiddle"></a>&nbsp; A <a href="https://github.com/Patels-Labs"><b>Patel's Labs</b></a> project</p>
+
 Tonight's programme is laid out when you open the app: the next episode of everything you're watching, the film you're halfway through, and a pick from your watchlist. Add a title and it tears off a ticket into your stash, sorted into Watchlist, Watching and Seen. Movie nights, a year in review and widgets are in 2.0, currently on TestFlight.
 
 Built with Swift and UIKit for iOS 26. Film and TV data comes from TMDB, and your stash syncs through iCloud.
-
----
-
-<p align="center">
-  <a href="https://github.com/Patels-Labs"><img alt="A Patel's Labs project" src="https://raw.githubusercontent.com/Patels-Labs/.github/main/brand/badge-light.png#gh-light-mode-only" height="40"><img alt="A Patel's Labs project" src="https://raw.githubusercontent.com/Patels-Labs/.github/main/brand/badge-dark.png#gh-dark-mode-only" height="40"></a>
-</p>
