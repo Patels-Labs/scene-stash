@@ -11,10 +11,5 @@ Built with Swift and UIKit for iOS 26. Film and TV data comes from TMDB, and you
 ---
 
 <p align="center">
-  <a href="https://github.com/Patels-Labs">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Patels-Labs/.github/main/brand/badge-dark.png">
-      <img alt="A Patel's Labs project" src="https://raw.githubusercontent.com/Patels-Labs/.github/main/brand/badge-light.png" height="40">
-    </picture>
-  </a>
+  <a href="https://github.com/Patels-Labs"><img alt="A Patel's Labs project" src="https://raw.githubusercontent.com/Patels-Labs/.github/main/brand/badge.png" height="40"></a>
 </p>
